@@ -1,0 +1,18 @@
+{
+  "$schema": "https://dl.viam.dev/module.schema.json",
+  "module_id": "viam:queue-estimator",
+  "visibility": "public",
+  "url": "https://github.com/viam-modules/queue-estimator",
+  "description": "models that estimate time spent in lines",
+  "build": {
+    "build": "make module.tar.gz",
+    "arch" : ["linux/amd64", "linux/arm64", "darwin/arm64"]
+  },
+  "models": [
+    {
+      "api": "rdk:component:sensor",
+      "model": "viam:queue-estimator:wait-sensor"
+    }
+  ],
+  "entrypoint": "module"
+}
