@@ -2,7 +2,7 @@ MOD_ARCH := $(shell uname -m)
 MOD_OS := $(shell uname -s)
 
 test:
-		go test ./countclassifier/
+		go test ./waitsensor/
 
 lint:
 		go mod tidy
