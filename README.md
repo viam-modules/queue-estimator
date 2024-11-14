@@ -5,7 +5,11 @@ models that summarize information from underlying vision models for waiting
 
 ### wait-sensor
 ```
-{
+"name": "queue-sensor",
+"namespace": "rdk",
+"type": "sensor",
+"model": "viam:queue-estimator:wait-sensor",
+"attributes": {
   "count_thresholds": {
     ">10_min": 1000,
     "0_min": 2,
