@@ -4,7 +4,7 @@ models that summarize information from underlying vision models for waiting
 ## Example Config
 
 ### wait-sensor
-- count_threshold: the value is the upper-bound. Anything below this number will be give the string label.
+- count_threshold: the value is the upper-bound. Anything below this number will be give the associated string label.
 - detector_name: the underlying vision service detector to use
 - camera_name: the underlying camera the vision service detector should use
 - poll_frequency_hz: how often to poll the underlying vision service, in Hz
