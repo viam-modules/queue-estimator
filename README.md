@@ -4,6 +4,12 @@ models that summarize information from underlying vision models for waiting
 ## Example Config
 
 ### wait-sensor
+- count_threshold: the value is the upper-bound. Anything below this number will be give the string label.
+- detector_name: the underlying vision service detector to use
+- camera_name: the underlying camera the vision service detector should use
+- poll_frequency_hz: how often to poll the underlying vision service, in Hz
+- chosen_labels: what are the labels  and confidence scores of the underlying vision service that should count towards the count.
+- extra_filds: any extra fields that should be copied to the sensor output
 ```
 "name": "queue-sensor",
 "namespace": "rdk",
