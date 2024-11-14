@@ -40,12 +40,12 @@ func init() {
 
 // Config contains names for necessary resources
 type Config struct {
-	DetectorName    string             `json:"detector_name"`
-	CameraName      string             `json:"camera_name"`
-	ChosenLabels    map[string]float64 `json:"chosen_labels"`
-	CountThresholds map[string]int     `json:"count_thresholds"`
-	PollFrequency   float64            `json:"poll_frequency_hz"`
-	ExtraFields     map[string]interface{}  `json:"extra_fields"`
+	DetectorName    string                 `json:"detector_name"`
+	CameraName      string                 `json:"camera_name"`
+	ChosenLabels    map[string]float64     `json:"chosen_labels"`
+	CountThresholds map[string]int         `json:"count_thresholds"`
+	PollFrequency   float64                `json:"poll_frequency_hz"`
+	ExtraFields     map[string]interface{} `json:"extra_fields"`
 }
 
 // Validate validates the config and returns implicit dependencies,
@@ -113,7 +113,7 @@ type counter struct {
 	frequency               float64
 	num                     atomic.Int64
 	class                   atomic.Value
-	extraFields map[string]interface{}
+	extraFields             map[string]interface{}
 }
 
 func newWaitSensor(
@@ -258,6 +258,8 @@ func (cs *counter) Readings(ctx context.Context, extra map[string]interface{}) (
 
 // Close does nothing
 func (cs *counter) Close(ctx context.Context) error {
+	cs.cancelFunc()
+	cs.activeBackgroundWorkers.Wait()
 	return nil
 }
 
