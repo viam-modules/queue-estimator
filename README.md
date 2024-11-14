@@ -1,6 +1,8 @@
 # queue-estimator
 models that summarize information from underlying vision models for waiting
 
+https://app.viam.com/module/viam/queue-estimator
+
 ## Example Config
 
 ### wait-sensor
