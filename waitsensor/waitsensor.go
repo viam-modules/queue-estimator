@@ -2,6 +2,9 @@ package waitsensor
 
 import (
 	"context"
+	"fmt"
+	"image"
+	"image/draw"
 	"sort"
 	"strings"
 	"sync"
@@ -10,6 +13,7 @@ import (
 
 	"github.com/pkg/errors"
 
+	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/components/sensor"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/resource"
@@ -46,6 +50,7 @@ type Config struct {
 	CountThresholds map[string]int         `json:"count_thresholds"`
 	PollFrequency   float64                `json:"poll_frequency_hz"`
 	ExtraFields     map[string]interface{} `json:"extra_fields"`
+	CropArea        []float64              `json:"cropping_box"`
 }
 
 // Validate validates the config and returns implicit dependencies,
@@ -69,6 +74,24 @@ func (cfg *Config) Validate(path string) ([]string, error) {
 			return nil, errors.Errorf("cannot have two labels for the same threshold in count_thresholds. Threshold value %v appears more than once", v)
 		}
 		testMap[v] = label
+	}
+	if len(cfg.CropArea) != 0 {
+		coords := cfg.CropArea
+		if len(coords) != 4 {
+			return nil, errors.Errorf("cropping_box must contain 4 numbers [x_min, y_min, x_max, y_max], attribute specifies %v numbers.", len(coords))
+		}
+		for _, e := range coords {
+			if e < 0.0 || e > 1.0 {
+				return nil, errors.New("cropping_box numbers are relative to the image dimension, and must be numbers between 0 and 1.")
+			}
+		}
+		xMin, yMin, xMax, yMax := coords[0], coords[1], coords[2], coords[3]
+		if xMin >= xMax {
+			return nil, fmt.Errorf("x_min (%f) must be less than x_max (%f)", xMin, xMax)
+		}
+		if yMin >= yMax {
+			return nil, fmt.Errorf("y_min (%f) must be less than y_max (%f)", yMin, yMax)
+		}
 	}
 	return []string{cfg.DetectorName, cfg.CameraName}, nil
 }
@@ -108,12 +131,14 @@ type counter struct {
 	detName                 string
 	camName                 string
 	detector                vision.Service
+	cam                     camera.Camera
 	labels                  map[string]float64
 	thresholds              []Bin
 	frequency               float64
 	num                     atomic.Int64
 	class                   atomic.Value
 	extraFields             map[string]interface{}
+	cropArea                []float64
 }
 
 func newWaitSensor(
@@ -154,7 +179,12 @@ func (cs *counter) Reconfigure(ctx context.Context, deps resource.Dependencies, 
 	if countConf.ExtraFields != nil {
 		cs.extraFields = countConf.ExtraFields
 	}
+	cs.cropArea = countConf.CropArea
 	cs.camName = countConf.CameraName
+	cs.cam, err = camera.FromDependencies(deps, countConf.CameraName)
+	if err != nil {
+		return errors.Wrapf(err, "unable to get camera %v for count classifier", countConf.CameraName)
+	}
 	cs.detName = countConf.DetectorName
 	cs.detector, err = vision.FromDependencies(deps, countConf.DetectorName)
 	if err != nil {
@@ -185,7 +215,7 @@ func (cs *counter) Reconfigure(ctx context.Context, deps resource.Dependencies, 
 	return nil
 }
 
-func (cs *counter) count(dets []objdet.Detection) (string, int) {
+func (cs *counter) countDets(dets []objdet.Detection) int {
 	// get the number of boxes with the right label and confidences
 	count := 0
 	for _, d := range dets {
@@ -196,30 +226,62 @@ func (cs *counter) count(dets []objdet.Detection) (string, int) {
 			}
 		}
 	}
+	return count
+}
+
+func (cs *counter) counts2class(count int) string {
 	// associated the number with the right label
 	for _, thresh := range cs.thresholds {
 		if count <= thresh.UpperBound {
-			return thresh.Label, count
+			return thresh.Label
 		}
 	}
-	return OverflowLabel, count
+	return OverflowLabel
 }
 
 func (cs *counter) run(ctx context.Context) error {
 	freq := cs.frequency
+	upperThreshold := 0
+	if len(cs.thresholds) > 2 {
+		upperThreshold = cs.thresholds[len(cs.thresholds)-2].UpperBound
+	} else if len(cs.thresholds) > 1 {
+		upperThreshold = cs.thresholds[len(cs.thresholds)-1].UpperBound
+	}
+	count := 0
+	stream, err := cs.cam.Stream(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer stream.Close(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		default:
 			start := time.Now()
-			dets, err := cs.detector.DetectionsFromCamera(ctx, cs.camName, nil)
+			img, release, err := stream.Next(ctx)
+			if err != nil {
+				return errors.Errorf("camera error in background thread: %q", err)
+			}
+			if len(cs.cropArea) != 0 {
+				img = crop(img, cs.cropArea)
+			}
+			dets, err := cs.detector.Detections(ctx, img, nil)
 			if err != nil {
 				return errors.Errorf("vision service error in background thread: %q", err)
 			}
-			class, num := cs.count(dets)
+			release()
+			// determine if the count goes up or down
+			c := cs.countDets(dets)
+			if c >= c.countThreshold && count < upperThreshold { //
+				count++
+			} else if count > 0 {
+				count--
+			}
+			// get the class name
+			class := cs.counts2class(count)
 			cs.class.Store(class)
-			cs.num.Store(int64(num))
+			cs.num.Store(int64(c))
 			took := time.Since(start)
 			waitFor := time.Duration((1/freq)*float64(time.Second)) - took // only poll according to set freq
 			if waitFor > time.Microsecond {
@@ -231,6 +293,27 @@ func (cs *counter) run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// crop coordinates were already validated upon configuration
+func crop(img image.Image, coords []float64) image.Image {
+	xMin, yMin, xMax, yMax := coords[0], coords[1], coords[2], coords[3]
+	// Get image bounds
+	bounds := img.Bounds()
+	width := bounds.Max.X - bounds.Min.X
+	height := bounds.Max.Y - bounds.Min.Y
+
+	// Convert relative coordinates to absolute pixels
+	x1 := bounds.Min.X + int(xMin*float64(width))
+	y1 := bounds.Min.Y + int(yMin*float64(height))
+	x2 := bounds.Min.X + int(xMax*float64(width))
+	y2 := bounds.Min.Y + int(yMax*float64(height))
+
+	// Create cropping rectangle
+	rect := image.Rect(x1, y1, x2, y2)
+	croppedImg := image.NewRGBA(image.Rect(0, 0, rect.Dx(), rect.Dy()))
+	draw.Draw(croppedImg, croppedImg.Bounds(), img, rect.Min, draw.Src)
+	return croppedImg
 }
 
 // Readings contains both the label and the count of the underlying detector
