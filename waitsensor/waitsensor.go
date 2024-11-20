@@ -140,6 +140,7 @@ type counter struct {
 	thresholds              []Bin
 	frequency               float64
 	num                     atomic.Int64
+	numInView               atomic.Int64
 	class                   atomic.Value
 	extraFields             map[string]interface{}
 	cropArea                []float64
@@ -286,6 +287,7 @@ func (cs *counter) run(ctx context.Context) error {
 			class := cs.counts2class(count)
 			cs.class.Store(class)
 			cs.num.Store(int64(count))
+			cs.numInView.Store(int64(c))
 			took := time.Since(start)
 			waitFor := time.Duration((1/freq)*float64(time.Second)) - took // only poll according to set freq
 			if waitFor > time.Microsecond {
@@ -337,8 +339,10 @@ func (cs *counter) Readings(ctx context.Context, extra map[string]interface{}) (
 			return nil, errors.Errorf("class string was not a string, but %T", className)
 		}
 		countNumber := cs.num.Load()
+		countInView := cs.numInView.Load()
 		outMap["estimated_wait_time_min"] = className
 		outMap["threshold_count"] = countNumber
+		outMap["count_in_view"] = countInView
 		return outMap, nil
 	}
 }
