@@ -44,13 +44,14 @@ func init() {
 
 // Config contains names for necessary resources
 type Config struct {
-	DetectorName    string                 `json:"detector_name"`
-	CameraName      string                 `json:"camera_name"`
-	ChosenLabels    map[string]float64     `json:"chosen_labels"`
-	CountThresholds map[string]int         `json:"count_thresholds"`
-	PollFrequency   float64                `json:"poll_frequency_hz"`
-	ExtraFields     map[string]interface{} `json:"extra_fields"`
-	CropArea        []float64              `json:"cropping_box"`
+	DetectorName     string                 `json:"detector_name"`
+	CameraName       string                 `json:"camera_name"`
+	ChosenLabels     map[string]float64     `json:"chosen_labels"`
+	CountThresholds  map[string]int         `json:"count_thresholds"`
+	TriggerThreshold int                    `json:"trigger_threshold"`
+	PollFrequency    float64                `json:"poll_frequency_hz"`
+	ExtraFields      map[string]interface{} `json:"extra_fields"`
+	CropArea         []float64              `json:"cropping_box"`
 }
 
 // Validate validates the config and returns implicit dependencies,
@@ -67,6 +68,9 @@ func (cfg *Config) Validate(path string) ([]string, error) {
 	}
 	if cfg.PollFrequency < 0 {
 		return nil, errors.New("attribute poll_frequency_hz cannot be negative")
+	}
+	if cfg.TriggerThreshold < 0 {
+		return nil, errors.New("attribute trigger_threshold cannot be negative")
 	}
 	testMap := map[int]string{}
 	for label, v := range cfg.CountThresholds {
@@ -139,6 +143,7 @@ type counter struct {
 	class                   atomic.Value
 	extraFields             map[string]interface{}
 	cropArea                []float64
+	countThreshold          int
 }
 
 func newWaitSensor(
@@ -180,6 +185,7 @@ func (cs *counter) Reconfigure(ctx context.Context, deps resource.Dependencies, 
 		cs.extraFields = countConf.ExtraFields
 	}
 	cs.cropArea = countConf.CropArea
+	cs.countThreshold = countConf.TriggerThreshold
 	cs.camName = countConf.CameraName
 	cs.cam, err = camera.FromDependencies(deps, countConf.CameraName)
 	if err != nil {
@@ -242,9 +248,7 @@ func (cs *counter) counts2class(count int) string {
 func (cs *counter) run(ctx context.Context) error {
 	freq := cs.frequency
 	upperThreshold := 0
-	if len(cs.thresholds) > 2 {
-		upperThreshold = cs.thresholds[len(cs.thresholds)-2].UpperBound
-	} else if len(cs.thresholds) > 1 {
+	if len(cs.thresholds) > 1 {
 		upperThreshold = cs.thresholds[len(cs.thresholds)-1].UpperBound
 	}
 	count := 0
@@ -273,7 +277,7 @@ func (cs *counter) run(ctx context.Context) error {
 			release()
 			// determine if the count goes up or down
 			c := cs.countDets(dets)
-			if c >= c.countThreshold && count < upperThreshold { //
+			if c >= cs.countThreshold && count < upperThreshold { //
 				count++
 			} else if count > 0 {
 				count--
@@ -281,7 +285,7 @@ func (cs *counter) run(ctx context.Context) error {
 			// get the class name
 			class := cs.counts2class(count)
 			cs.class.Store(class)
-			cs.num.Store(int64(c))
+			cs.num.Store(int64(count))
 			took := time.Since(start)
 			waitFor := time.Duration((1/freq)*float64(time.Second)) - took // only poll according to set freq
 			if waitFor > time.Microsecond {
@@ -334,7 +338,7 @@ func (cs *counter) Readings(ctx context.Context, extra map[string]interface{}) (
 		}
 		countNumber := cs.num.Load()
 		outMap["estimated_wait_time_min"] = className
-		outMap["people_in_line"] = countNumber
+		outMap["threshold_count"] = countNumber
 		return outMap, nil
 	}
 }
