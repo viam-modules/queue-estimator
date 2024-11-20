@@ -12,7 +12,7 @@ https://app.viam.com/module/viam/queue-estimator
 - camera_name: the underlying camera the vision service detector should use
 - poll_frequency_hz: how often to poll the underlying vision service, in Hz
 - chosen_labels: what are the labels  and confidence scores of the underlying vision service that should count towards the count.
-- extra_filds: any extra fields that should be copied to the sensor output
+- extra_fields: any extra fields that should be copied to the sensor output
 - cropping_box: `[x_min, y_min, x_max, y_max]` to crop the image to, and only count objects within that box. the box is using relative scale to the image dimension, e.g. `[0.3, .0.25, 0.8, 0.68]`
 ```
 "name": "queue-sensor",
