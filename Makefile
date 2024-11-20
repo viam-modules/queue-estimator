@@ -12,3 +12,5 @@ module.tar.gz:
 	go build -a -o module ./cmd/module
 	tar -czf $@ module
 
+clean:
+	rm -rf module module.tar.gz
