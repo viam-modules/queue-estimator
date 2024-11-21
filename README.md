@@ -3,6 +3,17 @@ models that summarize information from underlying vision models for waiting
 
 https://app.viam.com/module/viam/queue-estimator
 
+Using an underlying camera and vision service, you can use information from the vision service to measure crowding around an area of interest.
+
+You specify the area of interset by filling out the cropping box attribute in the config. If the cropping box is empty, the sensor will use the entire scene.
+
+Rather than just counting how many people are there in the area of interest (which could jump wildly up and down as people pass) to determine whether there a wait time, the algo instead counts to see if enough people are in that area of interest (as determined by the trigger_threshold) then increments a trigger_count as long as there are at least that many people in that area. This is supposed to capture the fact that many people will be congregating in the area, and not move away from it.
+
+- The trigger_count increments when the number of people is at or above the trigger_threshold
+- The trigger_count decrements when the number of people falls below the trigger_threshold
+- The label of occupancy (or wait times) associated with the location is determined by how high the trigger_count is
+- The trigger_count cannot go below 0, or above the largest upper bound set by the count_thresholds attribute. 
+
 ## Example Config
 
 ### wait-sensor
