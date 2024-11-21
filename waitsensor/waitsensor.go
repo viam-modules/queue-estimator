@@ -69,8 +69,8 @@ func (cfg *Config) Validate(path string) ([]string, error) {
 	if cfg.PollFrequency < 0 {
 		return nil, errors.New("attribute poll_frequency_hz cannot be negative")
 	}
-	if cfg.TriggerThreshold < 0 {
-		return nil, errors.New("attribute trigger_threshold cannot be negative")
+	if cfg.TriggerThreshold =< 0 {
+		return nil, errors.New("attribute trigger_threshold must be greater than 0")
 	}
 	testMap := map[int]string{}
 	for label, v := range cfg.CountThresholds {
