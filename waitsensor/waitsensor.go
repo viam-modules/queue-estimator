@@ -142,7 +142,6 @@ type counter struct {
 	thresholds              []Bin
 	frequency               float64
 	numInView               atomic.Int64
-	tickCount               atomic.Int64
 	class                   atomic.Value
 	extraFields             map[string]interface{}
 	cropArea                []float64
@@ -312,7 +311,6 @@ func (cs *counter) run(ctx context.Context) error {
 			count++
 			countMap[class] += 1 // increment that class for later calculation
 			cs.numInView.Store(int64(c))
-			cs.tickCount.Store(int64(count))
 			if count >= upperThreshold {
 				maxClass := countMap.MaxLabel()
 				cs.class.Store(maxClass)
@@ -370,10 +368,8 @@ func (cs *counter) Readings(ctx context.Context, extra map[string]interface{}) (
 			return nil, errors.Errorf("class string was not a string, but %T", className)
 		}
 		countInView := cs.numInView.Load()
-		tickCount := cs.tickCount.Load()
 		outMap["estimated_wait_time_min"] = className
 		outMap["count_in_view"] = countInView
-		outMap["tickCount"] = tickCount
 		return outMap, nil
 	}
 }
