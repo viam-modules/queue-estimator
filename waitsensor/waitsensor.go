@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"image"
 	"image/draw"
-	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -31,7 +30,7 @@ const (
 	// DefaultMaxFrequency is how often the vision service will poll the camera for a new image
 	DefaultPollFrequency = 1.0
 	// DefaultTransitionTime is how long it takes for the state to change by default
-	DefaultTransitionTime = 30
+	DefaultTransitionTime = 30.0
 )
 
 var (
@@ -51,8 +50,8 @@ type Config struct {
 	CameraName      string                 `json:"camera_name"`
 	ChosenLabels    map[string]float64     `json:"chosen_labels"`
 	CountThresholds map[string]int         `json:"count_thresholds"`
-	TransitionTime  int                    `json:"transition_time_s"`
-	PollFrequency   float64                `json:"poll_frequency_hz"`
+	CountPeriod     float64                `json:"sampling_period_s"`
+	NSamples        int                    `json:"n_samples"`
 	ExtraFields     map[string]interface{} `json:"extra_fields"`
 	CropArea        []float64              `json:"cropping_box"`
 }
@@ -69,11 +68,11 @@ func (cfg *Config) Validate(path string) ([]string, error) {
 	if len(cfg.CountThresholds) == 0 {
 		return nil, errors.New("attribute count_thresholds is required")
 	}
-	if cfg.PollFrequency < 0 {
-		return nil, errors.New("attribute poll_frequency_hz cannot be negative")
+	if cfg.NSamples <= 0 {
+		return nil, errors.New("attribute n_samples must be greater than 0")
 	}
-	if cfg.TransitionTime <= 0 {
-		return nil, errors.New("attribute transition_time_s must be greater than 0")
+	if cfg.CountPeriod < 0 {
+		return nil, errors.New("attribute sampling_period_s cannot be less than 0. default is 30s")
 	}
 	testMap := map[int]string{}
 	for label, v := range cfg.CountThresholds {
@@ -180,10 +179,6 @@ func (cs *counter) Reconfigure(ctx context.Context, deps resource.Dependencies, 
 	if err != nil {
 		return errors.Errorf("Could not assert proper config for %s", ModelName)
 	}
-	cs.frequency = DefaultPollFrequency
-	if countConf.PollFrequency > 0 {
-		cs.frequency = countConf.PollFrequency
-	}
 	cs.extraFields = map[string]interface{}{}
 	if countConf.ExtraFields != nil {
 		cs.extraFields = countConf.ExtraFields
@@ -191,12 +186,12 @@ func (cs *counter) Reconfigure(ctx context.Context, deps resource.Dependencies, 
 	cs.cropArea = countConf.CropArea
 	// transition time in seconds
 	transitionTime := DefaultTransitionTime
-	if countConf.TransitionTime > 0 {
-		transitionTime = countConf.TransitionTime
+	if countConf.CountPeriod > 0 {
+		transitionTime = countConf.CountPeriod
 	}
-	transitionCount := math.Max(1.0, math.Floor(cs.frequency*float64(transitionTime)))
-	cs.transitionCount = int(transitionCount)
-	cs.logger.Infof("number of ticks/time between state change for queue estimator, count: %v, time (s): %v", cs.transitionCount, transitionTime)
+	cs.transitionCount = countConf.NSamples
+	cs.frequency = transitionTime / float64(cs.transitionCount)
+	cs.logger.Infof("number of samples/time between state change for queue estimator, n_samples: %v, time (s): %v", cs.transitionCount, transitionTime)
 	cs.camName = countConf.CameraName
 	cs.cam, err = camera.FromDependencies(deps, countConf.CameraName)
 	if err != nil {
