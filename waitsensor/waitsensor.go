@@ -27,8 +27,10 @@ const (
 	ModelName = "wait-sensor"
 	// OverflowLabel is the label if the counts exceed what was specified by the user
 	OverflowLabel = "Overflow"
-	// DefaulMaxFrequency is how often the vision service will poll the camera for a new image
+	// DefaultMaxFrequency is how often the vision service will poll the camera for a new image
 	DefaultPollFrequency = 1.0
+	// DefaultTransitionTime is how long it takes for the state to change by default
+	DefaultTransitionTime = 30.0
 )
 
 var (
@@ -44,14 +46,14 @@ func init() {
 
 // Config contains names for necessary resources
 type Config struct {
-	DetectorName     string                 `json:"detector_name"`
-	CameraName       string                 `json:"camera_name"`
-	ChosenLabels     map[string]float64     `json:"chosen_labels"`
-	CountThresholds  map[string]int         `json:"count_thresholds"`
-	TriggerThreshold int                    `json:"trigger_threshold"`
-	PollFrequency    float64                `json:"poll_frequency_hz"`
-	ExtraFields      map[string]interface{} `json:"extra_fields"`
-	CropArea         []float64              `json:"cropping_box"`
+	DetectorName    string                 `json:"detector_name"`
+	CameraName      string                 `json:"camera_name"`
+	ChosenLabels    map[string]float64     `json:"chosen_labels"`
+	CountThresholds map[string]int         `json:"count_thresholds"`
+	CountPeriod     float64                `json:"sampling_period_s"`
+	NSamples        int                    `json:"n_samples"`
+	ExtraFields     map[string]interface{} `json:"extra_fields"`
+	CropArea        []float64              `json:"cropping_box"`
 }
 
 // Validate validates the config and returns implicit dependencies,
@@ -66,11 +68,11 @@ func (cfg *Config) Validate(path string) ([]string, error) {
 	if len(cfg.CountThresholds) == 0 {
 		return nil, errors.New("attribute count_thresholds is required")
 	}
-	if cfg.PollFrequency < 0 {
-		return nil, errors.New("attribute poll_frequency_hz cannot be negative")
+	if cfg.NSamples <= 0 {
+		return nil, errors.New("attribute n_samples must be greater than 0")
 	}
-	if cfg.TriggerThreshold <= 0 {
-		return nil, errors.New("attribute trigger_threshold must be greater than 0")
+	if cfg.CountPeriod < 0 {
+		return nil, errors.New("attribute sampling_period_s cannot be less than 0. default is 30s")
 	}
 	testMap := map[int]string{}
 	for label, v := range cfg.CountThresholds {
@@ -139,12 +141,12 @@ type counter struct {
 	labels                  map[string]float64
 	thresholds              []Bin
 	frequency               float64
-	num                     atomic.Int64
 	numInView               atomic.Int64
+	tickCount               atomic.Int64
 	class                   atomic.Value
 	extraFields             map[string]interface{}
 	cropArea                []float64
-	countThreshold          int
+	transitionCount         int
 }
 
 func newWaitSensor(
@@ -177,16 +179,19 @@ func (cs *counter) Reconfigure(ctx context.Context, deps resource.Dependencies, 
 	if err != nil {
 		return errors.Errorf("Could not assert proper config for %s", ModelName)
 	}
-	cs.frequency = DefaultPollFrequency
-	if countConf.PollFrequency > 0 {
-		cs.frequency = countConf.PollFrequency
-	}
 	cs.extraFields = map[string]interface{}{}
 	if countConf.ExtraFields != nil {
 		cs.extraFields = countConf.ExtraFields
 	}
 	cs.cropArea = countConf.CropArea
-	cs.countThreshold = countConf.TriggerThreshold
+	// transition time in seconds
+	transitionTime := DefaultTransitionTime
+	if countConf.CountPeriod > 0 {
+		transitionTime = countConf.CountPeriod
+	}
+	cs.transitionCount = countConf.NSamples
+	cs.frequency = transitionTime / float64(cs.transitionCount)
+	cs.logger.Infof("number of samples/time between state change for queue estimator, n_samples: %v, time (s): %v", cs.transitionCount, transitionTime)
 	cs.camName = countConf.CameraName
 	cs.cam, err = camera.FromDependencies(deps, countConf.CameraName)
 	if err != nil {
@@ -236,6 +241,7 @@ func (cs *counter) countDets(dets []objdet.Detection) int {
 	return count
 }
 
+// return the level, and the string associated with that level
 func (cs *counter) counts2class(count int) string {
 	// associated the number with the right label
 	for _, thresh := range cs.thresholds {
@@ -246,13 +252,38 @@ func (cs *counter) counts2class(count int) string {
 	return OverflowLabel
 }
 
+type CountMap map[string]int
+
+func NewCountMap(thresholds []Bin) CountMap {
+	countMap := CountMap{}
+	for _, thresh := range thresholds {
+		countMap[thresh.Label] = 0
+	}
+	return countMap
+}
+
+func (cm CountMap) Reset() {
+	for label, _ := range cm {
+		cm[label] = 0
+	}
+}
+
+func (cm CountMap) MaxLabel() string {
+	maxLab := OverflowLabel
+	maxCount := 0
+	for label, count := range cm {
+		if count > maxCount {
+			maxLab = label
+		}
+	}
+	return maxLab
+}
+
 func (cs *counter) run(ctx context.Context) error {
 	freq := cs.frequency
-	upperThreshold := 0
-	if len(cs.thresholds) > 1 {
-		upperThreshold = cs.thresholds[len(cs.thresholds)-1].UpperBound
-	}
+	upperThreshold := cs.transitionCount
 	count := 0
+	countMap := NewCountMap(cs.thresholds)
 	stream, err := cs.cam.Stream(ctx, nil)
 	if err != nil {
 		return err
@@ -276,18 +307,18 @@ func (cs *counter) run(ctx context.Context) error {
 				return errors.Errorf("vision service error in background thread: %q", err)
 			}
 			release()
-			// determine if the count goes up or down
 			c := cs.countDets(dets)
-			if c >= cs.countThreshold && count < upperThreshold { //
-				count++
-			} else if count > 0 {
-				count--
-			}
-			// get the class name
-			class := cs.counts2class(count)
-			cs.class.Store(class)
-			cs.num.Store(int64(count))
+			class := cs.counts2class(c)
+			count++
+			countMap[class] += 1 // increment that class for later calculation
 			cs.numInView.Store(int64(c))
+			cs.tickCount.Store(int64(count))
+			if count >= upperThreshold {
+				maxClass := countMap.MaxLabel()
+				cs.class.Store(maxClass)
+				count = 0
+				countMap.Reset()
+			}
 			took := time.Since(start)
 			waitFor := time.Duration((1/freq)*float64(time.Second)) - took // only poll according to set freq
 			if waitFor > time.Microsecond {
@@ -338,11 +369,11 @@ func (cs *counter) Readings(ctx context.Context, extra map[string]interface{}) (
 		if !ok {
 			return nil, errors.Errorf("class string was not a string, but %T", className)
 		}
-		countNumber := cs.num.Load()
 		countInView := cs.numInView.Load()
+		tickCount := cs.tickCount.Load()
 		outMap["estimated_wait_time_min"] = className
-		outMap["threshold_count"] = countNumber
 		outMap["count_in_view"] = countInView
+		outMap["tickCount"] = tickCount
 		return outMap, nil
 	}
 }
