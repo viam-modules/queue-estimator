@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"image/draw"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -27,8 +28,10 @@ const (
 	ModelName = "wait-sensor"
 	// OverflowLabel is the label if the counts exceed what was specified by the user
 	OverflowLabel = "Overflow"
-	// DefaulMaxFrequency is how often the vision service will poll the camera for a new image
+	// DefaultMaxFrequency is how often the vision service will poll the camera for a new image
 	DefaultPollFrequency = 1.0
+	// DefaultTransitionTime is how long it takes for the state to change by default
+	DefaultTransitionTime = 30
 )
 
 var (
@@ -44,14 +47,14 @@ func init() {
 
 // Config contains names for necessary resources
 type Config struct {
-	DetectorName     string                 `json:"detector_name"`
-	CameraName       string                 `json:"camera_name"`
-	ChosenLabels     map[string]float64     `json:"chosen_labels"`
-	CountThresholds  map[string]int         `json:"count_thresholds"`
-	TriggerThreshold int                    `json:"trigger_threshold"`
-	PollFrequency    float64                `json:"poll_frequency_hz"`
-	ExtraFields      map[string]interface{} `json:"extra_fields"`
-	CropArea         []float64              `json:"cropping_box"`
+	DetectorName    string                 `json:"detector_name"`
+	CameraName      string                 `json:"camera_name"`
+	ChosenLabels    map[string]float64     `json:"chosen_labels"`
+	CountThresholds map[string]int         `json:"count_thresholds"`
+	TransitionTime  int                    `json:"transition_time_s"`
+	PollFrequency   float64                `json:"poll_frequency_hz"`
+	ExtraFields     map[string]interface{} `json:"extra_fields"`
+	CropArea        []float64              `json:"cropping_box"`
 }
 
 // Validate validates the config and returns implicit dependencies,
@@ -69,8 +72,8 @@ func (cfg *Config) Validate(path string) ([]string, error) {
 	if cfg.PollFrequency < 0 {
 		return nil, errors.New("attribute poll_frequency_hz cannot be negative")
 	}
-	if cfg.TriggerThreshold <= 0 {
-		return nil, errors.New("attribute trigger_threshold must be greater than 0")
+	if cfg.TransitionTime <= 0 {
+		return nil, errors.New("attribute transition_time_s must be greater than 0")
 	}
 	testMap := map[int]string{}
 	for label, v := range cfg.CountThresholds {
@@ -139,12 +142,11 @@ type counter struct {
 	labels                  map[string]float64
 	thresholds              []Bin
 	frequency               float64
-	num                     atomic.Int64
 	numInView               atomic.Int64
 	class                   atomic.Value
 	extraFields             map[string]interface{}
 	cropArea                []float64
-	countThreshold          int
+	transitionCount         int
 }
 
 func newWaitSensor(
@@ -186,7 +188,14 @@ func (cs *counter) Reconfigure(ctx context.Context, deps resource.Dependencies, 
 		cs.extraFields = countConf.ExtraFields
 	}
 	cs.cropArea = countConf.CropArea
-	cs.countThreshold = countConf.TriggerThreshold
+	// transition time in seconds
+	transitionTime := DefaultTransitionTime
+	if countConf.TransitionTime > 0 {
+		transitionTime = countConf.TransitionTime
+	}
+	transitionCount := math.Max(1.0, math.Floor(cs.frequency*float64(transitionTime)))
+	cs.transitionCount = int(transitionCount)
+	cs.logger.Infow("number of ticks/time between state change for queue estimator", "count", cs.transitionCount, "time (s)", transitionTime)
 	cs.camName = countConf.CameraName
 	cs.cam, err = camera.FromDependencies(deps, countConf.CameraName)
 	if err != nil {
@@ -236,6 +245,7 @@ func (cs *counter) countDets(dets []objdet.Detection) int {
 	return count
 }
 
+// return the level, and the string associated with that level
 func (cs *counter) counts2class(count int) string {
 	// associated the number with the right label
 	for _, thresh := range cs.thresholds {
@@ -246,13 +256,38 @@ func (cs *counter) counts2class(count int) string {
 	return OverflowLabel
 }
 
+type CountMap map[string]int
+
+func NewCountMap(thresholds []Bin) CountMap {
+	countMap := CountMap{}
+	for _, thresh := range thresholds {
+		countMap[thresh.Label] = 0
+	}
+	return countMap
+}
+
+func (cm CountMap) Reset() {
+	for label, _ := range cm {
+		cm[label] = 0
+	}
+}
+
+func (cm CountMap) MaxLabel() string {
+	maxLab := OverflowLabel
+	maxCount := 0
+	for label, count := range cm {
+		if count > maxCount {
+			maxLab = label
+		}
+	}
+	return maxLab
+}
+
 func (cs *counter) run(ctx context.Context) error {
 	freq := cs.frequency
-	upperThreshold := 0
-	if len(cs.thresholds) > 1 {
-		upperThreshold = cs.thresholds[len(cs.thresholds)-1].UpperBound
-	}
+	upperThreshold := cs.transitionCount
 	count := 0
+	countMap := NewCountMap(cs.thresholds)
 	stream, err := cs.cam.Stream(ctx, nil)
 	if err != nil {
 		return err
@@ -276,18 +311,17 @@ func (cs *counter) run(ctx context.Context) error {
 				return errors.Errorf("vision service error in background thread: %q", err)
 			}
 			release()
-			// determine if the count goes up or down
 			c := cs.countDets(dets)
-			if c >= cs.countThreshold && count < upperThreshold { //
-				count++
-			} else if count > 0 {
-				count--
-			}
-			// get the class name
-			class := cs.counts2class(count)
-			cs.class.Store(class)
-			cs.num.Store(int64(count))
+			class := cs.counts2class(c)
+			count++
+			countMap[class] += 1 // increment that class for later calculation
 			cs.numInView.Store(int64(c))
+			if count >= upperThreshold {
+				maxClass := countMap.MaxLabel()
+				cs.class.Store(maxClass)
+				count = 0
+				countMap.Reset()
+			}
 			took := time.Since(start)
 			waitFor := time.Duration((1/freq)*float64(time.Second)) - took // only poll according to set freq
 			if waitFor > time.Microsecond {
@@ -338,10 +372,8 @@ func (cs *counter) Readings(ctx context.Context, extra map[string]interface{}) (
 		if !ok {
 			return nil, errors.Errorf("class string was not a string, but %T", className)
 		}
-		countNumber := cs.num.Load()
 		countInView := cs.numInView.Load()
 		outMap["estimated_wait_time_min"] = className
-		outMap["threshold_count"] = countNumber
 		outMap["count_in_view"] = countInView
 		return outMap, nil
 	}
