@@ -15,6 +15,7 @@ import (
 
 	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/components/sensor"
+	"go.viam.com/rdk/gostream"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/resource"
 	"go.viam.com/rdk/services/vision"
@@ -47,23 +48,24 @@ func init() {
 // Config contains names for necessary resources
 type Config struct {
 	DetectorName    string                 `json:"detector_name"`
-	CameraName      string                 `json:"camera_name"`
 	ChosenLabels    map[string]float64     `json:"chosen_labels"`
 	CountThresholds map[string]int         `json:"count_thresholds"`
 	CountPeriod     float64                `json:"sampling_period_s"`
 	NSamples        int                    `json:"n_samples"`
 	ExtraFields     map[string]interface{} `json:"extra_fields"`
-	CropArea        []float64              `json:"cropping_box"`
+	ValidRegions    map[string][][]float64 `json:"valid_regions"`
 }
 
 // Validate validates the config and returns implicit dependencies,
 // this Validate checks if the camera and detector exist for the module's vision model.
 func (cfg *Config) Validate(path string) ([]string, error) {
+	camAndDetNames := []string{}
 	if cfg.DetectorName == "" {
 		return nil, errors.New("attribute detector_name cannot be left blank")
 	}
-	if cfg.CameraName == "" {
-		return nil, errors.New("attribute camera_name cannot be left blank")
+	camAndDetNames = append(camAndDetNames, cfg.DetectorName)
+	if len(cfg.ValidRegions) == 0 {
+		return nil, errors.New("attribute valid_regions cannot be left blank")
 	}
 	if len(cfg.CountThresholds) == 0 {
 		return nil, errors.New("attribute count_thresholds is required")
@@ -81,25 +83,16 @@ func (cfg *Config) Validate(path string) ([]string, error) {
 		}
 		testMap[v] = label
 	}
-	if len(cfg.CropArea) != 0 {
-		coords := cfg.CropArea
-		if len(coords) != 4 {
-			return nil, errors.Errorf("cropping_box must contain 4 numbers [x_min, y_min, x_max, y_max], attribute specifies %v numbers.", len(coords))
-		}
-		for _, e := range coords {
-			if e < 0.0 || e > 1.0 {
-				return nil, errors.New("cropping_box numbers are relative to the image dimension, and must be numbers between 0 and 1.")
+	for camName, listBB := range cfg.ValidRegions {
+		camAndDetNames = append(camAndDetNames, camName)
+		for _, coords := range listBB {
+			_, err := NewBoundingBox(coords)
+			if err != nil {
+				return nil, errors.Wrapf(err, "error in valid_region for %v", camName)
 			}
 		}
-		xMin, yMin, xMax, yMax := coords[0], coords[1], coords[2], coords[3]
-		if xMin >= xMax {
-			return nil, fmt.Errorf("x_min (%f) must be less than x_max (%f)", xMin, xMax)
-		}
-		if yMin >= yMax {
-			return nil, fmt.Errorf("y_min (%f) must be less than y_max (%f)", yMin, yMax)
-		}
 	}
-	return []string{cfg.DetectorName, cfg.CameraName}, nil
+	return camAndDetNames, nil
 }
 
 // Bin stores the thresholds that turns counts into labels
@@ -128,6 +121,57 @@ func NewThresholds(t map[string]int) []Bin {
 	return out
 }
 
+type BoundingBox struct {
+	relBox []float64
+}
+
+func NewBoundingBox(coords []float64) (BoundingBox, error) {
+	if len(coords) != 0 {
+		if len(coords) != 4 {
+			return BoundingBox{}, errors.Errorf("bounding box must contain 4 numbers [x_min, y_min, x_max, y_max], got %v.", coords)
+		}
+		for _, e := range coords {
+			if e < 0.0 || e > 1.0 {
+				return BoundingBox{}, errors.New("bounding box numbers are relative to the image dimension, and must be numbers between 0 and 1.")
+			}
+		}
+		xMin, yMin, xMax, yMax := coords[0], coords[1], coords[2], coords[3]
+		if xMin >= xMax {
+			return BoundingBox{}, fmt.Errorf("x_min (%f) must be less than x_max (%f)", xMin, xMax)
+		}
+		if yMin >= yMax {
+			return BoundingBox{}, fmt.Errorf("y_min (%f) must be less than y_max (%f)", yMin, yMax)
+		}
+	}
+	return BoundingBox{relBox: coords}, nil
+}
+
+// crop coordinates were already validated upon configuration
+// empty bounding box implies no crop
+func (bb BoundingBox) Crop(img image.Image) image.Image {
+	coords := bb.relBox
+	if len(coords) != 4 {
+		return img
+	}
+	xMin, yMin, xMax, yMax := coords[0], coords[1], coords[2], coords[3]
+	// Get image bounds
+	bounds := img.Bounds()
+	width := bounds.Max.X - bounds.Min.X
+	height := bounds.Max.Y - bounds.Min.Y
+
+	// Convert relative coordinates to absolute pixels
+	x1 := bounds.Min.X + int(xMin*float64(width))
+	y1 := bounds.Min.Y + int(yMin*float64(height))
+	x2 := bounds.Min.X + int(xMax*float64(width))
+	y2 := bounds.Min.Y + int(yMax*float64(height))
+
+	// Create cropping rectangle
+	rect := image.Rect(x1, y1, x2, y2)
+	croppedImg := image.NewRGBA(image.Rect(0, 0, rect.Dx(), rect.Dy()))
+	draw.Draw(croppedImg, croppedImg.Bounds(), img, rect.Min, draw.Src)
+	return croppedImg
+}
+
 type counter struct {
 	resource.Named
 	cancelFunc              context.CancelFunc
@@ -135,16 +179,15 @@ type counter struct {
 	activeBackgroundWorkers sync.WaitGroup
 	logger                  logging.Logger
 	detName                 string
-	camName                 string
 	detector                vision.Service
-	cam                     camera.Camera
+	cams                    map[string]camera.Camera
+	validRegions            map[string][]BoundingBox
 	labels                  map[string]float64
 	thresholds              []Bin
 	frequency               float64
 	numInView               atomic.Int64
 	class                   atomic.Value
 	extraFields             map[string]interface{}
-	cropArea                []float64
 	transitionCount         int
 }
 
@@ -182,7 +225,26 @@ func (cs *counter) Reconfigure(ctx context.Context, deps resource.Dependencies, 
 	if countConf.ExtraFields != nil {
 		cs.extraFields = countConf.ExtraFields
 	}
-	cs.cropArea = countConf.CropArea
+	cs.validRegions = make(map[string][]BoundingBox)
+	cs.cams = make(map[string]camera.Camera)
+	for camName, bbList := range countConf.ValidRegions {
+		// first store the cameras from dependencies
+		cn := camName
+		cam, err := camera.FromDependencies(deps, cn)
+		if err != nil {
+			return errors.Wrapf(err, "unable to get camera %v for count classifier", cn)
+		}
+		cs.cams[cn] = cam
+		// next store the valid regions as a list of bounding boxes
+		cs.validRegions[cn] = []BoundingBox{}
+		for _, coords := range bbList {
+			bb, err := NewBoundingBox(coords)
+			if err != nil {
+				return errors.Wrapf(err, "error in valid region for %v", cn)
+			}
+			cs.validRegions[cn] = append(cs.validRegions[cn], bb)
+		}
+	}
 	// transition time in seconds
 	transitionTime := DefaultTransitionTime
 	if countConf.CountPeriod > 0 {
@@ -190,12 +252,7 @@ func (cs *counter) Reconfigure(ctx context.Context, deps resource.Dependencies, 
 	}
 	cs.transitionCount = countConf.NSamples
 	cs.frequency = transitionTime / float64(cs.transitionCount)
-	cs.logger.Infof("number of samples/time between state change for queue estimator, n_samples: %v, time (s): %v", cs.transitionCount, transitionTime)
-	cs.camName = countConf.CameraName
-	cs.cam, err = camera.FromDependencies(deps, countConf.CameraName)
-	if err != nil {
-		return errors.Wrapf(err, "unable to get camera %v for count classifier", countConf.CameraName)
-	}
+	cs.logger.Infof("number of samples/time between state change for queue estimator, n_samples: %v, time (s): %v. number of cameras: %v", cs.transitionCount, transitionTime, len(cs.cams))
 	cs.detName = countConf.DetectorName
 	cs.detector, err = vision.FromDependencies(deps, countConf.DetectorName)
 	if err != nil {
@@ -215,6 +272,9 @@ func (cs *counter) Reconfigure(ctx context.Context, deps resource.Dependencies, 
 		for {
 			runErr := cs.run(cs.cancelContext)
 			if runErr != nil {
+				if strings.Contains(runErr.Error(), "context canceled") {
+					return
+				}
 				cs.logger.Errorw("background thread exited with error", "error", runErr)
 				continue // keep trying to run, forever
 			}
@@ -251,26 +311,51 @@ func (cs *counter) counts2class(count int) string {
 	return OverflowLabel
 }
 
-type CountMap map[string]int
-
-func NewCountMap(thresholds []Bin) CountMap {
-	countMap := CountMap{}
-	for _, thresh := range thresholds {
-		countMap[thresh.Label] = 0
-	}
-	return countMap
+type RingBuffer struct {
+	size     int
+	data     []string
+	current  int
+	full     bool
+	labelMap map[string]int
 }
 
-func (cm CountMap) Reset() {
-	for label, _ := range cm {
-		cm[label] = 0
+func NewRingBuffer(thresholds []Bin, size int) *RingBuffer {
+	data := make([]string, size)
+	labelMap := make(map[string]int)
+	for _, b := range thresholds {
+		labelMap[b.Label] = 0
+	}
+	return &RingBuffer{
+		size:     size,
+		data:     data,
+		labelMap: labelMap,
 	}
 }
 
-func (cm CountMap) MaxLabel() string {
+func (rb *RingBuffer) Add(newLabel string) {
+	oldLabel := rb.data[rb.current]
+	rb.data[rb.current] = newLabel
+	rb.current = (rb.current + 1) % rb.size
+	if rb.current == 0 { // the first time it reaches this again, it will be full
+		rb.full = true
+	}
+	rb.labelMap[newLabel] += 1
+	if rb.full && oldLabel != "" {
+		rb.labelMap[oldLabel] -= 1
+	}
+}
+
+func (rb *RingBuffer) Len() int {
+	if rb.full {
+		return rb.size
+	}
+	return rb.current
+}
+
+func (rb *RingBuffer) MaxLabel() string {
 	maxLab := OverflowLabel
 	maxCount := 0
-	for label, count := range cm {
+	for label, count := range rb.labelMap {
 		if count > maxCount {
 			maxLab = label
 		}
@@ -280,43 +365,60 @@ func (cm CountMap) MaxLabel() string {
 
 func (cs *counter) run(ctx context.Context) error {
 	freq := cs.frequency
-	upperThreshold := cs.transitionCount
-	count := 0
-	countMap := NewCountMap(cs.thresholds)
-	stream, err := cs.cam.Stream(ctx, nil)
-	if err != nil {
-		return err
+	buffer := NewRingBuffer(cs.thresholds, cs.transitionCount)
+	// set up a stream for each camera
+	streams := map[string]gostream.VideoStream{}
+	for camName, cam := range cs.cams {
+		stream, err := cam.Stream(ctx, nil)
+		if err != nil {
+			return err
+		}
+		streams[camName] = stream
 	}
-	defer stream.Close(ctx)
+	defer func() {
+		for _, stream := range streams {
+			if stream != nil {
+				stream.Close(ctx)
+			}
+		}
+	}()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		default:
 			start := time.Now()
-			img, release, err := stream.Next(ctx)
-			if err != nil {
-				return errors.Errorf("camera error in background thread: %q", err)
+			// process for each stream in the list of cameras
+			totalCounts := 0
+			for camName, bbs := range cs.validRegions {
+				img, release, err := streams[camName].Next(ctx)
+				if err != nil {
+					return errors.Errorf("camera %v error in background thread: %q", camName, err)
+				}
+				if len(bbs) == 0 { // if no bounding box, use the image without cropping
+					dets, err := cs.detector.Detections(ctx, img, nil)
+					if err != nil {
+						return errors.Errorf("vision service error in background thread: %q", err)
+					}
+					c := cs.countDets(dets)
+					totalCounts += c
+				}
+				for _, bb := range bbs {
+					img = bb.Crop(img)
+					dets, err := cs.detector.Detections(ctx, img, nil)
+					if err != nil {
+						return errors.Errorf("vision service error in background thread: %q", err)
+					}
+					c := cs.countDets(dets)
+					totalCounts += c
+				}
+				release()
 			}
-			if len(cs.cropArea) != 0 {
-				img = crop(img, cs.cropArea)
-			}
-			dets, err := cs.detector.Detections(ctx, img, nil)
-			if err != nil {
-				return errors.Errorf("vision service error in background thread: %q", err)
-			}
-			release()
-			c := cs.countDets(dets)
-			class := cs.counts2class(c)
-			count++
-			countMap[class] += 1 // increment that class for later calculation
-			cs.numInView.Store(int64(c))
-			if count >= upperThreshold {
-				maxClass := countMap.MaxLabel()
-				cs.class.Store(maxClass)
-				count = 0
-				countMap.Reset()
-			}
+			class := cs.counts2class(totalCounts)
+			buffer.Add(class)
+			maxClass := buffer.MaxLabel()
+			cs.numInView.Store(int64(totalCounts))
+			cs.class.Store(maxClass)
 			took := time.Since(start)
 			waitFor := time.Duration((1/freq)*float64(time.Second)) - took // only poll according to set freq
 			if waitFor > time.Microsecond {
@@ -328,27 +430,6 @@ func (cs *counter) run(ctx context.Context) error {
 			}
 		}
 	}
-}
-
-// crop coordinates were already validated upon configuration
-func crop(img image.Image, coords []float64) image.Image {
-	xMin, yMin, xMax, yMax := coords[0], coords[1], coords[2], coords[3]
-	// Get image bounds
-	bounds := img.Bounds()
-	width := bounds.Max.X - bounds.Min.X
-	height := bounds.Max.Y - bounds.Min.Y
-
-	// Convert relative coordinates to absolute pixels
-	x1 := bounds.Min.X + int(xMin*float64(width))
-	y1 := bounds.Min.Y + int(yMin*float64(height))
-	x2 := bounds.Min.X + int(xMax*float64(width))
-	y2 := bounds.Min.Y + int(yMax*float64(height))
-
-	// Create cropping rectangle
-	rect := image.Rect(x1, y1, x2, y2)
-	croppedImg := image.NewRGBA(image.Rect(0, 0, rect.Dx(), rect.Dy()))
-	draw.Draw(croppedImg, croppedImg.Bounds(), img, rect.Min, draw.Src)
-	return croppedImg
 }
 
 // Readings contains both the label and the count of the underlying detector
