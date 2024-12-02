@@ -226,14 +226,23 @@ func (cs *counter) Reconfigure(ctx context.Context, deps resource.Dependencies, 
 		cs.extraFields = countConf.ExtraFields
 	}
 	cs.validRegions = make(map[string][]BoundingBox)
+	cs.cams = make(map[string]camera.Camera)
 	for camName, bbList := range countConf.ValidRegions {
-		cs.validRegions[camName] = []BoundingBox{}
+		// first store the cameras from dependencies
+		cn := camName
+		cam, err := camera.FromDependencies(deps, cn)
+		if err != nil {
+			return errors.Wrapf(err, "unable to get camera %v for count classifier", cn)
+		}
+		cs.cams[cn] = cam
+		// next store the valid regions as a list of bounding boxes
+		cs.validRegions[cn] = []BoundingBox{}
 		for _, coords := range bbList {
 			bb, err := NewBoundingBox(coords)
 			if err != nil {
-				return errors.Wrapf(err, "error in valid region for %v", camName)
+				return errors.Wrapf(err, "error in valid region for %v", cn)
 			}
-			cs.validRegions[camName] = append(cs.validRegions[camName], bb)
+			cs.validRegions[cn] = append(cs.validRegions[cn], bb)
 		}
 	}
 	// transition time in seconds
@@ -243,16 +252,7 @@ func (cs *counter) Reconfigure(ctx context.Context, deps resource.Dependencies, 
 	}
 	cs.transitionCount = countConf.NSamples
 	cs.frequency = transitionTime / float64(cs.transitionCount)
-	cs.logger.Infof("number of samples/time between state change for queue estimator, n_samples: %v, time (s): %v", cs.transitionCount, transitionTime)
-	cs.cams = make(map[string]camera.Camera)
-	for camName, _ := range countConf.ValidRegions {
-		cn := camName
-		cam, err := camera.FromDependencies(deps, cn)
-		if err != nil {
-			return errors.Wrapf(err, "unable to get camera %v for count classifier", cn)
-		}
-		cs.cams[cn] = cam
-	}
+	cs.logger.Infof("number of samples/time between state change for queue estimator, n_samples: %v, time (s): %v. number of cameras: %v", cs.transitionCount, transitionTime, len(cs.cams))
 	cs.detName = countConf.DetectorName
 	cs.detector, err = vision.FromDependencies(deps, countConf.DetectorName)
 	if err != nil {
@@ -272,6 +272,9 @@ func (cs *counter) Reconfigure(ctx context.Context, deps resource.Dependencies, 
 		for {
 			runErr := cs.run(cs.cancelContext)
 			if runErr != nil {
+				if strings.Contains(runErr.Error(), "context canceled") {
+					return
+				}
 				cs.logger.Errorw("background thread exited with error", "error", runErr)
 				continue // keep trying to run, forever
 			}
@@ -371,8 +374,14 @@ func (cs *counter) run(ctx context.Context) error {
 			return err
 		}
 		streams[camName] = stream
-		defer stream.Close(ctx)
 	}
+	defer func() {
+		for _, stream := range streams {
+			if stream != nil {
+				stream.Close(ctx)
+			}
+		}
+	}()
 	for {
 		select {
 		case <-ctx.Done():
@@ -386,16 +395,24 @@ func (cs *counter) run(ctx context.Context) error {
 				if err != nil {
 					return errors.Errorf("camera %v error in background thread: %q", camName, err)
 				}
+				if len(bbs) == 0 { // if no bounding box, use the image without cropping
+					dets, err := cs.detector.Detections(ctx, img, nil)
+					if err != nil {
+						return errors.Errorf("vision service error in background thread: %q", err)
+					}
+					c := cs.countDets(dets)
+					totalCounts += c
+				}
 				for _, bb := range bbs {
 					img = bb.Crop(img)
 					dets, err := cs.detector.Detections(ctx, img, nil)
 					if err != nil {
 						return errors.Errorf("vision service error in background thread: %q", err)
 					}
-					release()
 					c := cs.countDets(dets)
 					totalCounts += c
 				}
+				release()
 			}
 			class := cs.counts2class(totalCounts)
 			buffer.Add(class)
