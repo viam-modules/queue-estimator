@@ -304,7 +304,7 @@ func (cs *counter) countDets(dets []objdet.Detection) int {
 func (cs *counter) counts2class(count int) string {
 	// associated the number with the right label
 	for _, thresh := range cs.thresholds {
-		if count < thresh.UpperBound {
+		if count <= thresh.UpperBound {
 			return thresh.Label
 		}
 	}
