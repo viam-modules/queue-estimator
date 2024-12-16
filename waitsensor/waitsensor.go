@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
@@ -97,7 +96,7 @@ func (cfg *Config) Validate(path string) ([]string, error) {
 
 // Bin stores the thresholds that turns counts into labels
 type Bin struct {
-	UpperBound int
+	UpperBound float64
 	Label      string
 }
 
@@ -115,7 +114,7 @@ func NewThresholds(t map[string]int) []Bin {
 	}
 	sort.Ints(keys)
 	for _, key := range keys {
-		b := Bin{key, thresholds[key]}
+		b := Bin{float64(key), thresholds[key]}
 		out = append(out, b)
 	}
 	return out
@@ -172,6 +171,13 @@ func (bb BoundingBox) Crop(img image.Image) image.Image {
 	return croppedImg
 }
 
+type syncValues struct {
+	numInView       int
+	class           string
+	mean            float64
+	countListString string
+}
+
 type counter struct {
 	resource.Named
 	cancelFunc              context.CancelFunc
@@ -185,10 +191,10 @@ type counter struct {
 	labels                  map[string]float64
 	thresholds              []Bin
 	frequency               float64
-	numInView               atomic.Int64
-	class                   atomic.Value
 	extraFields             map[string]interface{}
 	transitionCount         int
+	mu                      sync.RWMutex
+	syncVals                *syncValues
 }
 
 func newWaitSensor(
@@ -217,6 +223,7 @@ func (cs *counter) Reconfigure(ctx context.Context, deps resource.Dependencies, 
 	cs.cancelFunc = cancel
 	cs.cancelContext = cancelableCtx
 
+	cs.syncVals = &syncValues{}
 	countConf, err := resource.NativeConfig[*Config](conf)
 	if err != nil {
 		return errors.Errorf("Could not assert proper config for %s", ModelName)
@@ -301,9 +308,9 @@ func (cs *counter) countDets(dets []objdet.Detection) int {
 }
 
 // return the level, and the string associated with that level
-func (cs *counter) counts2class(count int) string {
+func counts2class(count float64, thresholds []Bin) string {
 	// associated the number with the right label
-	for _, thresh := range cs.thresholds {
+	for _, thresh := range thresholds {
 		if count <= thresh.UpperBound {
 			return thresh.Label
 		}
@@ -312,36 +319,25 @@ func (cs *counter) counts2class(count int) string {
 }
 
 type RingBuffer struct {
-	size     int
-	data     []string
-	current  int
-	full     bool
-	labelMap map[string]int
+	size    int
+	data    []float64
+	current int
+	full    bool
 }
 
-func NewRingBuffer(thresholds []Bin, size int) *RingBuffer {
-	data := make([]string, size)
-	labelMap := make(map[string]int)
-	for _, b := range thresholds {
-		labelMap[b.Label] = 0
-	}
+func NewRingBuffer(size int) *RingBuffer {
+	data := make([]float64, size)
 	return &RingBuffer{
-		size:     size,
-		data:     data,
-		labelMap: labelMap,
+		size: size,
+		data: data,
 	}
 }
 
-func (rb *RingBuffer) Add(newLabel string) {
-	oldLabel := rb.data[rb.current]
-	rb.data[rb.current] = newLabel
+func (rb *RingBuffer) Add(newCount float64) {
+	rb.data[rb.current] = newCount
 	rb.current = (rb.current + 1) % rb.size
 	if rb.current == 0 { // the first time it reaches this again, it will be full
 		rb.full = true
-	}
-	rb.labelMap[newLabel] += 1
-	if rb.full && oldLabel != "" {
-		rb.labelMap[oldLabel] -= 1
 	}
 }
 
@@ -352,20 +348,50 @@ func (rb *RingBuffer) Len() int {
 	return rb.current
 }
 
-func (rb *RingBuffer) MaxLabel() string {
-	maxLab := OverflowLabel
+func (rb *RingBuffer) Mean() float64 {
+	num := rb.Len()
+	if num == 0 {
+		return 0.0
+	}
+	avg := 0.0
+	for _, v := range rb.data {
+		avg += v
+	}
+	return avg / float64(num)
+}
+
+func (rb *RingBuffer) MeanLabel(thresholds []Bin) string {
+	avg := rb.Mean()
+	return counts2class(avg, thresholds)
+}
+
+func (rb *RingBuffer) ModeLabel(thresholds []Bin) string {
+	modeLab := OverflowLabel
 	maxCount := 0
-	for label, count := range rb.labelMap {
-		if count > maxCount {
-			maxLab = label
+	labelMap := make(map[string]int)
+	for _, val := range rb.data {
+		class := counts2class(val, thresholds)
+		if _, ok := labelMap[class]; !ok {
+			labelMap[class] = 1
+		} else {
+			labelMap[class] += 1
 		}
 	}
-	return maxLab
+	for label, count := range labelMap {
+		if count > maxCount {
+			modeLab = label
+		}
+	}
+	return modeLab
+}
+
+func (rb *RingBuffer) String() string {
+	return fmt.Sprintf("%.1f", rb.data)
 }
 
 func (cs *counter) run(ctx context.Context) error {
 	freq := cs.frequency
-	buffer := NewRingBuffer(cs.thresholds, cs.transitionCount)
+	buffer := NewRingBuffer(cs.transitionCount)
 	// set up a stream for each camera
 	streams := map[string]gostream.VideoStream{}
 	for camName, cam := range cs.cams {
@@ -414,11 +440,15 @@ func (cs *counter) run(ctx context.Context) error {
 				}
 				release()
 			}
-			class := cs.counts2class(totalCounts)
-			buffer.Add(class)
-			maxClass := buffer.MaxLabel()
-			cs.numInView.Store(int64(totalCounts))
-			cs.class.Store(maxClass)
+			buffer.Add(float64(totalCounts))
+			mean := buffer.Mean()
+			meanClass := counts2class(mean, cs.thresholds)
+			cs.mu.Lock()
+			cs.syncVals.numInView = totalCounts
+			cs.syncVals.mean = mean
+			cs.syncVals.class = meanClass
+			cs.syncVals.countListString = buffer.String()
+			cs.mu.Unlock()
 			took := time.Since(start)
 			waitFor := time.Duration((1/freq)*float64(time.Second)) - took // only poll according to set freq
 			if waitFor > time.Microsecond {
@@ -444,13 +474,12 @@ func (cs *counter) Readings(ctx context.Context, extra map[string]interface{}) (
 		for k, v := range cs.extraFields {
 			outMap[k] = v
 		}
-		className, ok := cs.class.Load().(string)
-		if !ok {
-			return nil, errors.Errorf("class string was not a string, but %T", className)
-		}
-		countInView := cs.numInView.Load()
-		outMap["estimated_wait_time_min"] = className
-		outMap["count_in_view"] = countInView
+		cs.mu.RLock()
+		outMap["estimated_wait_time_min"] = cs.syncVals.class
+		outMap["count_in_view"] = cs.syncVals.numInView
+		outMap["mean_count"] = cs.syncVals.mean
+		outMap["count_list"] = cs.syncVals.countListString
+		cs.mu.RUnlock()
 		return outMap, nil
 	}
 }
