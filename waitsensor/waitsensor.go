@@ -172,6 +172,7 @@ func (bb BoundingBox) Crop(img image.Image) image.Image {
 }
 
 type syncValues struct {
+	mu              sync.RWMutex
 	numInView       int
 	class           string
 	mean            float64
@@ -193,7 +194,6 @@ type counter struct {
 	frequency               float64
 	extraFields             map[string]interface{}
 	transitionCount         int
-	mu                      sync.RWMutex
 	syncVals                *syncValues
 }
 
@@ -443,12 +443,12 @@ func (cs *counter) run(ctx context.Context) error {
 			buffer.Add(float64(totalCounts))
 			mean := buffer.Mean()
 			meanClass := counts2class(mean, cs.thresholds)
-			cs.mu.Lock()
+			cs.syncVals.mu.Lock()
 			cs.syncVals.numInView = totalCounts
 			cs.syncVals.mean = mean
 			cs.syncVals.class = meanClass
 			cs.syncVals.countListString = buffer.String()
-			cs.mu.Unlock()
+			cs.syncVals.mu.Unlock()
 			took := time.Since(start)
 			waitFor := time.Duration((1/freq)*float64(time.Second)) - took // only poll according to set freq
 			if waitFor > time.Microsecond {
@@ -474,12 +474,12 @@ func (cs *counter) Readings(ctx context.Context, extra map[string]interface{}) (
 		for k, v := range cs.extraFields {
 			outMap[k] = v
 		}
-		cs.mu.RLock()
+		cs.syncVals.mu.RLock()
 		outMap["estimated_wait_time_min"] = cs.syncVals.class
 		outMap["count_in_view"] = cs.syncVals.numInView
 		outMap["mean_count"] = cs.syncVals.mean
 		outMap["count_list"] = cs.syncVals.countListString
-		cs.mu.RUnlock()
+		cs.syncVals.mu.RUnlock()
 		return outMap, nil
 	}
 }
