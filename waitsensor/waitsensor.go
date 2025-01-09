@@ -147,10 +147,10 @@ func NewBoundingBox(coords BoundingBoxConfig) (BoundingBox, error) {
 			"y_min (%f) must be less than y_max (%f)", coords.YMin, coords.YMax)
 	}
 	bb := BoundingBox{xMin: coords.XMin,
-					  yMin: coords.YMin,
+	                  yMin: coords.YMin,
 	                  xMax: coords.XMax,
-					  yMax: coords.YMax,
-				  }
+	                  yMax: coords.YMax,
+	                  }
 	return bb, nil
 }
 
