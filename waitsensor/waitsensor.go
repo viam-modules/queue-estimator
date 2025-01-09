@@ -133,23 +133,22 @@ type BoundingBox struct {
 
 func NewBoundingBox(coords BoundingBoxConfig) (BoundingBox, error) {
 	if len(coords) != 0 {
-		if len(coords) != 4 {
-			return BoundingBox{}, errors.Errorf("bounding box must contain 4 numbers [x_min, y_min, x_max, y_max], got %v.", coords)
-		}
-		for _, e := range coords {
+		coordList := []float64{coords.XMin, coords.YMin, coords.XMax, coords.YMax}
+		for _, e := range coordList {
 			if e < 0.0 || e > 1.0 {
 				return BoundingBox{}, errors.New("bounding box numbers are relative to the image dimension, and must be numbers between 0 and 1.")
 			}
 		}
-		xMin, yMin, xMax, yMax := coords.XMin, coords.YMin, coords.XMax, coords.YMax
-		if xMin >= xMax {
-			return BoundingBox{}, fmt.Errorf("x_min (%f) must be less than x_max (%f)", xMin, xMax)
+		if coords.XMin >= coords.XMax {
+			return BoundingBox{}, fmt.Errorf(
+				"x_min (%f) must be less than x_max (%f)", coords.XMin, coords.XMax)
 		}
-		if yMin >= yMax {
-			return BoundingBox{}, fmt.Errorf("y_min (%f) must be less than y_max (%f)", yMin, yMax)
+		if coords.YMin >= coords.YMax {
+			return BoundingBox{}, fmt.Errorf(
+				"y_min (%f) must be less than y_max (%f)", coords.YMin, coords.YMax)
 		}
 	}
-	return BoundingBox{relBox: []float64{xMin, yMin, xMax, yMax}}, nil
+	return BoundingBox{relBox: coordList}, nil
 }
 
 // crop coordinates were already validated upon configuration
