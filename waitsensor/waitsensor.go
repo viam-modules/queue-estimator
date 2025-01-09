@@ -128,7 +128,7 @@ func NewThresholds(t map[string]int) []Bin {
 }
 
 type BoundingBox struct {
-	relBox []float64
+	xMin, yMin, xMax, yMax float64
 }
 
 func NewBoundingBox(coords BoundingBoxConfig) (BoundingBox, error) {
@@ -146,27 +146,30 @@ func NewBoundingBox(coords BoundingBoxConfig) (BoundingBox, error) {
 		return BoundingBox{}, fmt.Errorf(
 			"y_min (%f) must be less than y_max (%f)", coords.YMin, coords.YMax)
 	}
-	return BoundingBox{relBox: coordList}, nil
+	bb := BoundingBox{xMin: coords.XMin,
+					  yMin: coords.YMin,
+	                  xMax: coords.XMax,
+					  yMax: coords.YMax,
+				  }
+	return bb, nil
 }
 
 // crop coordinates were already validated upon configuration
 // empty bounding box implies no crop
 func (bb BoundingBox) Crop(img image.Image) image.Image {
-	coords := bb.relBox
-	if len(coords) != 4 {
+	if bb.xMax == 0 || bb.yMax == 0 {
 		return img
 	}
-	xMin, yMin, xMax, yMax := coords[0], coords[1], coords[2], coords[3]
 	// Get image bounds
 	bounds := img.Bounds()
 	width := bounds.Max.X - bounds.Min.X
 	height := bounds.Max.Y - bounds.Min.Y
 
 	// Convert relative coordinates to absolute pixels
-	x1 := bounds.Min.X + int(xMin*float64(width))
-	y1 := bounds.Min.Y + int(yMin*float64(height))
-	x2 := bounds.Min.X + int(xMax*float64(width))
-	y2 := bounds.Min.Y + int(yMax*float64(height))
+	x1 := bounds.Min.X + int(bb.xMin*float64(width))
+	y1 := bounds.Min.Y + int(bb.yMin*float64(height))
+	x2 := bounds.Min.X + int(bb.xMax*float64(width))
+	y2 := bounds.Min.Y + int(bb.yMax*float64(height))
 
 	// Create cropping rectangle
 	rect := image.Rect(x1, y1, x2, y2)
