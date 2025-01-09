@@ -132,21 +132,19 @@ type BoundingBox struct {
 }
 
 func NewBoundingBox(coords BoundingBoxConfig) (BoundingBox, error) {
-	if len(coords) != 0 {
-		coordList := []float64{coords.XMin, coords.YMin, coords.XMax, coords.YMax}
-		for _, e := range coordList {
-			if e < 0.0 || e > 1.0 {
-				return BoundingBox{}, errors.New("bounding box numbers are relative to the image dimension, and must be numbers between 0 and 1.")
-			}
+	coordList := []float64{coords.XMin, coords.YMin, coords.XMax, coords.YMax}
+	for _, e := range coordList {
+		if e < 0.0 || e > 1.0 {
+			return BoundingBox{}, errors.New("bounding box numbers are relative to the image dimension, and must be numbers between 0 and 1.")
 		}
-		if coords.XMin >= coords.XMax {
-			return BoundingBox{}, fmt.Errorf(
-				"x_min (%f) must be less than x_max (%f)", coords.XMin, coords.XMax)
-		}
-		if coords.YMin >= coords.YMax {
-			return BoundingBox{}, fmt.Errorf(
-				"y_min (%f) must be less than y_max (%f)", coords.YMin, coords.YMax)
-		}
+	}
+	if coords.XMin >= coords.XMax {
+		return BoundingBox{}, fmt.Errorf(
+			"x_min (%f) must be less than x_max (%f)", coords.XMin, coords.XMax)
+	}
+	if coords.YMin >= coords.YMax {
+		return BoundingBox{}, fmt.Errorf(
+			"y_min (%f) must be less than y_max (%f)", coords.YMin, coords.YMax)
 	}
 	return BoundingBox{relBox: coordList}, nil
 }
