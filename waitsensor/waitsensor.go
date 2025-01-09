@@ -44,15 +44,22 @@ func init() {
 	})
 }
 
+type BoundingBoxConfig struct {
+	XMin float64 `json:"x_min"`
+	XMax float64 `json:"x_max"`
+	YMin float64 `json:"y_min"`
+	YMax float64 `json:"y_max"`
+}
+
 // Config contains names for necessary resources
 type Config struct {
-	DetectorName    string                 `json:"detector_name"`
-	ChosenLabels    map[string]float64     `json:"chosen_labels"`
-	CountThresholds map[string]int         `json:"count_thresholds"`
-	CountPeriod     float64                `json:"sampling_period_s"`
-	NSamples        int                    `json:"n_samples"`
-	ExtraFields     map[string]interface{} `json:"extra_fields"`
-	ValidRegions    map[string][][]float64 `json:"valid_regions"`
+	DetectorName    string                         `json:"detector_name"`
+	ChosenLabels    map[string]float64             `json:"chosen_labels"`
+	CountThresholds map[string]int                 `json:"count_thresholds"`
+	CountPeriod     float64                        `json:"sampling_period_s"`
+	NSamples        int                            `json:"n_samples"`
+	ExtraFields     map[string]interface{}         `json:"extra_fields"`
+	ValidRegions    map[string][]BoundingBoxConfig `json:"valid_regions"`
 }
 
 // Validate validates the config and returns implicit dependencies,
@@ -124,7 +131,7 @@ type BoundingBox struct {
 	relBox []float64
 }
 
-func NewBoundingBox(coords []float64) (BoundingBox, error) {
+func NewBoundingBox(coords BoundingBoxConfig) (BoundingBox, error) {
 	if len(coords) != 0 {
 		if len(coords) != 4 {
 			return BoundingBox{}, errors.Errorf("bounding box must contain 4 numbers [x_min, y_min, x_max, y_max], got %v.", coords)
@@ -134,7 +141,7 @@ func NewBoundingBox(coords []float64) (BoundingBox, error) {
 				return BoundingBox{}, errors.New("bounding box numbers are relative to the image dimension, and must be numbers between 0 and 1.")
 			}
 		}
-		xMin, yMin, xMax, yMax := coords[0], coords[1], coords[2], coords[3]
+		xMin, yMin, xMax, yMax := coords.XMin, coords.YMin, coords.XMax, coords.YMax
 		if xMin >= xMax {
 			return BoundingBox{}, fmt.Errorf("x_min (%f) must be less than x_max (%f)", xMin, xMax)
 		}
@@ -142,7 +149,7 @@ func NewBoundingBox(coords []float64) (BoundingBox, error) {
 			return BoundingBox{}, fmt.Errorf("y_min (%f) must be less than y_max (%f)", yMin, yMax)
 		}
 	}
-	return BoundingBox{relBox: coords}, nil
+	return BoundingBox{relBox: []float64{xMin, yMin, xMax, yMax}}, nil
 }
 
 // crop coordinates were already validated upon configuration
