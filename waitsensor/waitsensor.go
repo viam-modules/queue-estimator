@@ -132,8 +132,7 @@ type BoundingBox struct {
 }
 
 func NewBoundingBox(coords BoundingBoxConfig) (BoundingBox, error) {
-	coordList := []float64{coords.XMin, coords.YMin, coords.XMax, coords.YMax}
-	for _, e := range coordList {
+	for _, e := range []float64{coords.XMin, coords.YMin, coords.XMax, coords.YMax} {
 		if e < 0.0 || e > 1.0 {
 			return BoundingBox{}, errors.New("bounding box numbers are relative to the image dimension, and must be numbers between 0 and 1.")
 		}
