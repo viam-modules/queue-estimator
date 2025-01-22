@@ -1,7 +1,6 @@
 package waitsensor
 
 import (
-	"fmt"
 	"testing"
 
 	"go.viam.com/test"
@@ -103,7 +102,6 @@ func TestValidateInvalidBoundingBox(t *testing.T) {
 	incorrectOrderX.ValidRegions["box"][0].XMin = 0.99
 	_, err = incorrectOrderX.Validate("")
 	test.That(t, err, test.ShouldNotBeNil)
-	fmt.Println(incorrectOrderX)
 	test.That(t, err.Error(), test.ShouldContainSubstring, "must be less than x_max")
 
 	incorrectOrderY := makeValidConfig()
