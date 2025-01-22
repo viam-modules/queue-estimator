@@ -137,11 +137,13 @@ func NewBoundingBox(coords BoundingBoxConfig) (BoundingBox, error) {
 			return BoundingBox{}, errors.New("bounding box numbers are relative to the image dimension, and must be numbers between 0 and 1.")
 		}
 	}
-	if coords.XMin >= coords.XMax {
+	// If our "bounding box" is the whole image, XMax and/or YMax will be 0, in which case it can
+	// be equal to XMin/YMin. Otherwise, make sure the max is larger than the min.
+	if coords.XMax > 0 && coords.XMin >= coords.XMax {
 		return BoundingBox{}, fmt.Errorf(
 			"x_min (%f) must be less than x_max (%f)", coords.XMin, coords.XMax)
 	}
-	if coords.YMin >= coords.YMax {
+	if coords.YMax > 0 && coords.YMin >= coords.YMax {
 		return BoundingBox{}, fmt.Errorf(
 			"y_min (%f) must be less than y_max (%f)", coords.YMin, coords.YMax)
 	}
