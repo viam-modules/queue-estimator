@@ -9,23 +9,22 @@ import (
 
 func makeValidConfig() Config {
 	return Config{DetectorName: "test",
-	                     CountPeriod: 5.0,
-	                     NSamples: 10,
-						 CountThresholds: map[string]int{
-							 "one": 1,
-							 "two": 2,
-							 "three": 3,
-						 },
-	                     ValidRegions: map[string][]BoundingBoxConfig{
-	                         "box": {{XMin: 0.25,
-	                                  XMax: 0.75,
-	                                  YMin: 0.10,
-	                                  YMax: 0.90,
-	                                  }},
-	                     },
-		        	 }
-				 }
-
+		CountPeriod: 5.0,
+		NSamples:    10,
+		CountThresholds: map[string]int{
+			"one":   1,
+			"two":   2,
+			"three": 3,
+		},
+		ValidRegions: map[string][]BoundingBoxConfig{
+			"box": {{XMin: 0.25,
+				XMax: 0.75,
+				YMin: 0.10,
+				YMax: 0.90,
+			}},
+		},
+	}
+}
 
 func TestValidateEmpty(t *testing.T) {
 	var err error
