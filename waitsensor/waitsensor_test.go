@@ -28,13 +28,40 @@ func makeValidConfig() Config {
 
 
 func TestValidateEmpty(t *testing.T) {
+	var err error
+
 	cfg := Config{}
-	_, err := cfg.Validate("")
+	_, err = cfg.Validate("")
 	test.That(t, err, test.ShouldNotBeNil)
 	test.That(t, err.Error(), test.ShouldContainSubstring, "detector_name")
+
+	missingName := makeValidConfig()
+	missingName.DetectorName = ""
+	_, err = missingName.Validate("")
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, err.Error(), test.ShouldContainSubstring, "detector_name")
+
+	missingSamples := makeValidConfig()
+	missingSamples.NSamples = 0.0
+	_, err = missingSamples.Validate("")
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, err.Error(), test.ShouldContainSubstring, "n_samples")
+
+	missingThresholds := makeValidConfig()
+	missingThresholds.CountThresholds = nil
+	_, err = missingThresholds.Validate("")
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, err.Error(), test.ShouldContainSubstring, "count_thresholds")
+
+	missingRegions := makeValidConfig()
+	missingRegions.ValidRegions = nil
+	_, err = missingRegions.Validate("")
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, err.Error(), test.ShouldContainSubstring, "valid_regions")
+
 }
 
-func TestValidateCorrect(t *testing.T) {
+func TestValidateValid(t *testing.T) {
 	var err error
 
 	validConfig := makeValidConfig()
@@ -44,6 +71,16 @@ func TestValidateCorrect(t *testing.T) {
 	// Note that you can have a 0-area bounding box! We'll just ignore it and use the whole image.
 	validConfig.ValidRegions["box"][0].XMin = 0
 	validConfig.ValidRegions["box"][0].XMax = 0
+	_, err = validConfig.Validate("")
+	test.That(t, err, test.ShouldBeNil)
+
+	// and it's okay not to have a blank valid region!
+	validConfig.ValidRegions["box"][0] = BoundingBoxConfig{}
+	_, err = validConfig.Validate("")
+	test.That(t, err, test.ShouldBeNil)
+
+	// It's also okay to have a missing CountPeriod
+	validConfig.CountPeriod = 0.0
 	_, err = validConfig.Validate("")
 	test.That(t, err, test.ShouldBeNil)
 }
