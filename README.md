@@ -36,8 +36,18 @@ The level of crowdedness is updated continously usually a rolling average based 
   "sampling_period_s": 10,
   "n_samples": 5, # will measure the crowd every 2 seconds
   "valid_regions": {
-     "camera_3": [[0.3, 0.33, 0.6. 0.65]],
-     "camera_12": [[0.2, 0.1, 0.3, 0.3], [0.75, 0.75, 1.0, 1.0]],
+     "camera_3": [{"x_min": 0.3,
+                   "y_min": 0.33,
+                   "x_max": 0.6,
+                   "y_max": 0.65}],
+     "camera_12": [{"x_min": 0.2,
+                    "y_min": 0.1,
+                    "x_max": 0.3,
+                    "y_max": 0.3},
+                   {"x_min": 0.75,
+                    "y_min": 0.75,
+                    "x_max": 1.0,
+                    "y_max": 1.0}],
      "camera_44": [], # this means use the whole camera scene
   },
   "detector_name": "vision-1",
