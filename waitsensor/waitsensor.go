@@ -44,15 +44,22 @@ func init() {
 	})
 }
 
+type BoundingBoxConfig struct {
+	XMin float64 `json:"x_min"`
+	XMax float64 `json:"x_max"`
+	YMin float64 `json:"y_min"`
+	YMax float64 `json:"y_max"`
+}
+
 // Config contains names for necessary resources
 type Config struct {
-	DetectorName    string                 `json:"detector_name"`
-	ChosenLabels    map[string]float64     `json:"chosen_labels"`
-	CountThresholds map[string]int         `json:"count_thresholds"`
-	CountPeriod     float64                `json:"sampling_period_s"`
-	NSamples        int                    `json:"n_samples"`
-	ExtraFields     map[string]interface{} `json:"extra_fields"`
-	ValidRegions    map[string][][]float64 `json:"valid_regions"`
+	DetectorName    string                         `json:"detector_name"`
+	ChosenLabels    map[string]float64             `json:"chosen_labels"`
+	CountThresholds map[string]int                 `json:"count_thresholds"`
+	CountPeriod     float64                        `json:"sampling_period_s"`
+	NSamples        int                            `json:"n_samples"`
+	ExtraFields     map[string]interface{}         `json:"extra_fields"`
+	ValidRegions    map[string][]BoundingBoxConfig `json:"valid_regions"`
 }
 
 // Validate validates the config and returns implicit dependencies,
@@ -121,48 +128,49 @@ func NewThresholds(t map[string]int) []Bin {
 }
 
 type BoundingBox struct {
-	relBox []float64
+	xMin, yMin, xMax, yMax float64
 }
 
-func NewBoundingBox(coords []float64) (BoundingBox, error) {
-	if len(coords) != 0 {
-		if len(coords) != 4 {
-			return BoundingBox{}, errors.Errorf("bounding box must contain 4 numbers [x_min, y_min, x_max, y_max], got %v.", coords)
-		}
-		for _, e := range coords {
-			if e < 0.0 || e > 1.0 {
-				return BoundingBox{}, errors.New("bounding box numbers are relative to the image dimension, and must be numbers between 0 and 1.")
-			}
-		}
-		xMin, yMin, xMax, yMax := coords[0], coords[1], coords[2], coords[3]
-		if xMin >= xMax {
-			return BoundingBox{}, fmt.Errorf("x_min (%f) must be less than x_max (%f)", xMin, xMax)
-		}
-		if yMin >= yMax {
-			return BoundingBox{}, fmt.Errorf("y_min (%f) must be less than y_max (%f)", yMin, yMax)
+func NewBoundingBox(coords BoundingBoxConfig) (BoundingBox, error) {
+	for _, e := range []float64{coords.XMin, coords.YMin, coords.XMax, coords.YMax} {
+		if e < 0.0 || e > 1.0 {
+			return BoundingBox{}, errors.New("bounding box numbers are relative to the image dimension, and must be numbers between 0 and 1.")
 		}
 	}
-	return BoundingBox{relBox: coords}, nil
+	// If our "bounding box" is the whole image, XMax and/or YMax will be 0, in which case it can
+	// be equal to XMin/YMin. Otherwise, make sure the max is larger than the min.
+	if coords.XMax > 0 && coords.XMin >= coords.XMax {
+		return BoundingBox{}, fmt.Errorf(
+			"x_min (%f) must be less than x_max (%f)", coords.XMin, coords.XMax)
+	}
+	if coords.YMax > 0 && coords.YMin >= coords.YMax {
+		return BoundingBox{}, fmt.Errorf(
+			"y_min (%f) must be less than y_max (%f)", coords.YMin, coords.YMax)
+	}
+	bb := BoundingBox{xMin: coords.XMin,
+	                  yMin: coords.YMin,
+	                  xMax: coords.XMax,
+	                  yMax: coords.YMax,
+	                  }
+	return bb, nil
 }
 
 // crop coordinates were already validated upon configuration
 // empty bounding box implies no crop
 func (bb BoundingBox) Crop(img image.Image) image.Image {
-	coords := bb.relBox
-	if len(coords) != 4 {
+	if bb.xMax == 0 || bb.yMax == 0 {
 		return img
 	}
-	xMin, yMin, xMax, yMax := coords[0], coords[1], coords[2], coords[3]
 	// Get image bounds
 	bounds := img.Bounds()
 	width := bounds.Max.X - bounds.Min.X
 	height := bounds.Max.Y - bounds.Min.Y
 
 	// Convert relative coordinates to absolute pixels
-	x1 := bounds.Min.X + int(xMin*float64(width))
-	y1 := bounds.Min.Y + int(yMin*float64(height))
-	x2 := bounds.Min.X + int(xMax*float64(width))
-	y2 := bounds.Min.Y + int(yMax*float64(height))
+	x1 := bounds.Min.X + int(bb.xMin*float64(width))
+	y1 := bounds.Min.Y + int(bb.yMin*float64(height))
+	x2 := bounds.Min.X + int(bb.xMax*float64(width))
+	y2 := bounds.Min.Y + int(bb.yMax*float64(height))
 
 	// Create cropping rectangle
 	rect := image.Rect(x1, y1, x2, y2)
