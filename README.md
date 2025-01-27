@@ -14,8 +14,8 @@ The level of crowdedness is updated continously usually a rolling average based 
 
 ### wait-sensor
 - sampling_period_s: this is how long to "look back" for in order to make a decision based on average crowdedness over this time period.
-- n_samples: how often to poll the underlying vision service within the sampling_period_s. 
-- valid_regions: the underlying cameras and regions of interest within the respective camera scenes the vision service detector should use.
+- n_samples: how often to poll the underlying vision service within the sampling_period_s.
+- valid_regions: the underlying cameras and regions of interest within the respective camera scenes the vision service detector should use. The minimum and maximum X and Y values should each be between 0 and 1.
 - count_threshold: the corresponding string associated with the count for one sample. the value is the upper-bound of the trigger count. Anything below this number will be give the associated string label.
 - detector_name: the underlying vision service detector to use
 - chosen_labels: what are the labels  and confidence scores of the underlying vision service that should count towards the count.
@@ -36,8 +36,18 @@ The level of crowdedness is updated continously usually a rolling average based 
   "sampling_period_s": 10,
   "n_samples": 5, # will measure the crowd every 2 seconds
   "valid_regions": {
-     "camera_3": [[0.3, 0.33, 0.6. 0.65]],
-     "camera_12": [[0.2, 0.1, 0.3, 0.3], [0.75, 0.75, 1.0, 1.0]],
+     "camera_3": [{"x_min": 0.3,
+                   "y_min": 0.33,
+                   "x_max": 0.6,
+                   "y_max": 0.65}],
+     "camera_12": [{"x_min": 0.2,
+                    "y_min": 0.1,
+                    "x_max": 0.3,
+                    "y_max": 0.3},
+                   {"x_min": 0.75,
+                    "y_min": 0.75,
+                    "x_max": 1.0,
+                    "y_max": 1.0}],
      "camera_44": [], # this means use the whole camera scene
   },
   "detector_name": "vision-1",
