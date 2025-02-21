@@ -47,7 +47,7 @@ The level of crowdedness is updated continously usually a rolling average based 
                     "y_min": 0.75,
                     "x_max": 1.0,
                     "y_max": 1.0}],
-     "camera_44": [], # this means use the whole camera scene
+     "camera_44": [{}], # this means use the whole camera scene
   },
   "count_thresholds": {
     "0_min": 3,
