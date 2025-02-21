@@ -26,7 +26,7 @@ The level of crowdedness is updated continously usually a rolling average based 
 ## Example Config
 
 ### wait-sensor
-```
+```json
 "name": "queue-sensor",
 "namespace": "rdk",
 "type": "sensor",
@@ -63,6 +63,27 @@ The level of crowdedness is updated continously usually a rolling average based 
   "extra_fields": {
     "location_open": true,
     "location_name": "store_2"
+  }
+}
+```
+
+### minimum attributes example
+```json
+{
+  "count_thresholds": {
+    "No wait": 0,
+    "Short wait": 2,
+    "Medium wait": 5,
+    "Long wait": 10,
+    "Very long wait": 1000
+  },
+  "n_samples": 5,
+  "valid_regions": {
+    "main_camera": [{}]
+  },
+  "detector_name": "person_detector",
+  "chosen_labels": {
+    "person": 0.6,
   }
 }
 ```
