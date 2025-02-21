@@ -11,7 +11,9 @@
   "models": [
     {
       "api": "rdk:component:sensor",
-      "model": "viam:queue-estimator:wait-sensor"
+      "model": "viam:queue-estimator:wait-sensor",
+	  "short_description": "Sensor estimating how many people are in a camera feed",
+	  "markdown_link": "README.md#minimum-attributes-example"
     }
   ],
   "entrypoint": "module"
