@@ -32,13 +32,6 @@ The level of crowdedness is updated continously usually a rolling average based 
 "type": "sensor",
 "model": "viam:queue-estimator:wait-sensor",
 "attributes": {
-  "count_thresholds": {
-    "0_min": 3,
-    "2_min": 7,
-    "7_min": 14,
-    "10_min": 20,
-    ">10_min": 30
-  },
   "sampling_period_s": 10,
   "n_samples": 5, # will measure the crowd every 2 seconds
   "valid_regions": {
@@ -56,6 +49,13 @@ The level of crowdedness is updated continously usually a rolling average based 
                     "y_max": 1.0}],
      "camera_44": [], # this means use the whole camera scene
   },
+  "count_thresholds": {
+    "0_min": 3,
+    "2_min": 7,
+    "7_min": 14,
+    "10_min": 20,
+    ">10_min": 30
+  },
   "detector_name": "vision-1",
   "chosen_labels": {
     "person": 0.3
@@ -70,6 +70,10 @@ The level of crowdedness is updated continously usually a rolling average based 
 ### minimum attributes example
 ```json
 {
+  "n_samples": 5,
+  "valid_regions": {
+    "main_camera": [{}]
+  },
   "count_thresholds": {
     "No wait": 0,
     "Short wait": 2,
@@ -77,13 +81,9 @@ The level of crowdedness is updated continously usually a rolling average based 
     "Long wait": 10,
     "Very long wait": 1000
   },
-  "n_samples": 5,
-  "valid_regions": {
-    "main_camera": [{}]
-  },
   "detector_name": "person_detector",
   "chosen_labels": {
-    "person": 0.6,
+    "person": 0.6
   }
 }
 ```
