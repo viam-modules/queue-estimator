@@ -10,16 +10,22 @@ You specify the areas of interset by filling out the `valid_regions` attribute i
 Rather than just counting the sum of people in the areas of interest (which could jump wildly up and down as people pass) to determine whether there a wait time, the algo instead counts to see if enough people are in those areas of interest over a period of time (as determined by the sampling_period_s) and then updates the state of the queue as appropriate. The levels of crowdedness are determined by by the "count_thresholds", as well as how many samples (n_samples) have been taken within the counting period.
 
 The level of crowdedness is updated continously usually a rolling average based on the past n_samples from the regions of the interest.
+
+## Attributes
+
+| Name | Type | Inclusion | Description |
+| ---- | ---- | --------- | ----------- |
+| `sampling_period_s` | float64 | Optional | We "look back" over this amount of time to average the crowdedness. The default is 30 seconds. |
+| `n_samples` | int | Required | How many images to take, evenly spaced over `sampling_period_s` seconds. |
+| `valid_regions` | map | Required | Maps camera names (strings) to lists of objects describing bounding boxes within that camera image to search. Use an empty object to examine the entire image.  Otherwise, each object should contain the fields `x_min`, `x_max`, `y_min`, and `y_max`. All four fields should be floats between 0 and 1 and represent a fraction of the image's entire width/height. |
+| `count_thresholds` | map | Required | Maps labels the sensor should return (a string) to the maximum number of people detected when triggering this label (an int). Anything at or below this value (but higher than all lower values) will return this label. |
+| `detector_name` | string | Required | The underlying vision service detector to use |
+| `chosen_labels` | map | Required | The labels and minimum confidence scores of the underlying vision service that should be included in the total count. |
+| `extra_fields` | object | Optional | Any extra fields that should be copied to the sensor output |
+
 ## Example Config
 
 ### wait-sensor
-- sampling_period_s: this is how long to "look back" for in order to make a decision based on average crowdedness over this time period.
-- n_samples: how often to poll the underlying vision service within the sampling_period_s.
-- valid_regions: the underlying cameras and regions of interest within the respective camera scenes the vision service detector should use. The minimum and maximum X and Y values should each be between 0 and 1.
-- count_threshold: the corresponding string associated with the count for one sample. the value is the upper-bound of the trigger count. Anything below this number will be give the associated string label.
-- detector_name: the underlying vision service detector to use
-- chosen_labels: what are the labels  and confidence scores of the underlying vision service that should count towards the count.
-- extra_fields: any extra fields that should be copied to the sensor output
 ```
 "name": "queue-sensor",
 "namespace": "rdk",
