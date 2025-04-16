@@ -1,10 +1,12 @@
 package waitsensor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"image"
 	"image/draw"
+	"image/png"
 	"sort"
 	"strings"
 	"sync"
@@ -409,9 +411,14 @@ func (cs *counter) run(ctx context.Context) error {
 			// process for each stream in the list of cameras
 			totalCounts := 0
 			for camName, bbs := range cs.validRegions {
-				img, release, err := cs.cams[camName].Image(ctx, utils.MimeTypeJPEG, nil)
+				// We ignore the metadata returned with the bytes
+				imgBytes, _, err := cs.cams[camName].Image(ctx, utils.MimeTypePNG, nil)
 				if err != nil {
-					return errors.Errorf("camera %v error in background thread: %q", camName, err)
+					return errors.Errorf("camera %v error retrieving bytes: %q", camName, err)
+				}
+				img, err := png.Decode(bytes.NewReader(imgBytes))
+				if err != nil {
+					return errors.Errorf("camera %v error decoding bytes: %q", camName, err)
 				}
 				if len(bbs) == 0 { // if no bounding box, use the image without cropping
 					dets, err := cs.detector.Detections(ctx, img, nil)
@@ -430,7 +437,6 @@ func (cs *counter) run(ctx context.Context) error {
 					c := cs.countDets(dets)
 					totalCounts += c
 				}
-				release()
 			}
 			buffer.Add(float64(totalCounts))
 			mean := buffer.Mean()
