@@ -4,7 +4,7 @@ go 1.23
 
 require (
 	github.com/pkg/errors v0.9.1
-	go.viam.com/rdk v0.50.0
+	go.viam.com/rdk v0.70.0
 	go.viam.com/test v1.2.3
 	go.viam.com/utils v0.1.113
 )
