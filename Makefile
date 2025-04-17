@@ -8,7 +8,7 @@ lint:
 		go mod tidy
 		golangci-lint run
 
-module.tar.gz:
+module.tar.gz: go.mod go.sum waitsensor/waitsensor.go cmd/module/main.go
 	go build -a -o module ./cmd/module
 	tar -czf $@ module
 

@@ -14,10 +14,10 @@ import (
 
 	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/components/sensor"
-	"go.viam.com/rdk/gostream"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/resource"
 	"go.viam.com/rdk/services/vision"
+	"go.viam.com/rdk/utils"
 	objdet "go.viam.com/rdk/vision/objectdetection"
 	viamutils "go.viam.com/utils"
 )
@@ -400,22 +400,6 @@ func (rb *RingBuffer) String() string {
 func (cs *counter) run(ctx context.Context) error {
 	freq := cs.frequency
 	buffer := NewRingBuffer(cs.transitionCount)
-	// set up a stream for each camera
-	streams := map[string]gostream.VideoStream{}
-	for camName, cam := range cs.cams {
-		stream, err := cam.Stream(ctx, nil)
-		if err != nil {
-			return err
-		}
-		streams[camName] = stream
-	}
-	defer func() {
-		for _, stream := range streams {
-			if stream != nil {
-				stream.Close(ctx)
-			}
-		}
-	}()
 	for {
 		select {
 		case <-ctx.Done():
@@ -425,7 +409,7 @@ func (cs *counter) run(ctx context.Context) error {
 			// process for each stream in the list of cameras
 			totalCounts := 0
 			for camName, bbs := range cs.validRegions {
-				img, release, err := streams[camName].Next(ctx)
+				img, err := camera.DecodeImageFromCamera(ctx, utils.MimeTypeJPEG, nil, cs.cams[camName])
 				if err != nil {
 					return errors.Errorf("camera %v error in background thread: %q", camName, err)
 				}
@@ -446,7 +430,6 @@ func (cs *counter) run(ctx context.Context) error {
 					c := cs.countDets(dets)
 					totalCounts += c
 				}
-				release()
 			}
 			buffer.Add(float64(totalCounts))
 			mean := buffer.Mean()
