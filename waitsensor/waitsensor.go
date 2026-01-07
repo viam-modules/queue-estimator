@@ -17,7 +17,6 @@ import (
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/resource"
 	"go.viam.com/rdk/services/vision"
-	"go.viam.com/rdk/utils"
 	objdet "go.viam.com/rdk/vision/objectdetection"
 	viamutils "go.viam.com/utils"
 )
@@ -64,28 +63,28 @@ type Config struct {
 
 // Validate validates the config and returns implicit dependencies,
 // this Validate checks if the camera and detector exist for the module's vision model.
-func (cfg *Config) Validate(path string) ([]string, error) {
+func (cfg *Config) Validate(path string) ([]string, []string, error) {
 	camAndDetNames := []string{}
 	if cfg.DetectorName == "" {
-		return nil, errors.New("attribute detector_name cannot be left blank")
+		return nil, nil, errors.New("attribute detector_name cannot be left blank")
 	}
 	camAndDetNames = append(camAndDetNames, cfg.DetectorName)
 	if len(cfg.ValidRegions) == 0 {
-		return nil, errors.New("attribute valid_regions cannot be left blank")
+		return nil, nil, errors.New("attribute valid_regions cannot be left blank")
 	}
 	if len(cfg.CountThresholds) == 0 {
-		return nil, errors.New("attribute count_thresholds is required")
+		return nil, nil, errors.New("attribute count_thresholds is required")
 	}
 	if cfg.NSamples <= 0 {
-		return nil, errors.New("attribute n_samples must be greater than 0")
+		return nil, nil, errors.New("attribute n_samples must be greater than 0")
 	}
 	if cfg.CountPeriod < 0 {
-		return nil, errors.New("attribute sampling_period_s cannot be less than 0. default is 30s")
+		return nil, nil, errors.New("attribute sampling_period_s cannot be less than 0. default is 30s")
 	}
 	testMap := map[int]string{}
 	for label, v := range cfg.CountThresholds {
 		if _, ok := testMap[v]; ok {
-			return nil, errors.Errorf("cannot have two labels for the same threshold in count_thresholds. Threshold value %v appears more than once", v)
+			return nil, nil, errors.Errorf("cannot have two labels for the same threshold in count_thresholds. Threshold value %v appears more than once", v)
 		}
 		testMap[v] = label
 	}
@@ -94,11 +93,11 @@ func (cfg *Config) Validate(path string) ([]string, error) {
 		for _, coords := range listBB {
 			_, err := NewBoundingBox(coords)
 			if err != nil {
-				return nil, errors.Wrapf(err, "error in valid_region for %v", camName)
+				return nil, nil, errors.Wrapf(err, "error in valid_region for %v", camName)
 			}
 		}
 	}
-	return camAndDetNames, nil
+	return camAndDetNames, nil, nil
 }
 
 // Bin stores the thresholds that turns counts into labels
@@ -148,10 +147,10 @@ func NewBoundingBox(coords BoundingBoxConfig) (BoundingBox, error) {
 			"y_min (%f) must be less than y_max (%f)", coords.YMin, coords.YMax)
 	}
 	bb := BoundingBox{xMin: coords.XMin,
-	                  yMin: coords.YMin,
-	                  xMax: coords.XMax,
-	                  yMax: coords.YMax,
-	                  }
+		yMin: coords.YMin,
+		xMax: coords.XMax,
+		yMax: coords.YMax,
+	}
 	return bb, nil
 }
 
@@ -245,7 +244,7 @@ func (cs *counter) Reconfigure(ctx context.Context, deps resource.Dependencies, 
 	for camName, bbList := range countConf.ValidRegions {
 		// first store the cameras from dependencies
 		cn := camName
-		cam, err := camera.FromDependencies(deps, cn)
+		cam, err := camera.FromProvider(deps, cn)
 		if err != nil {
 			return errors.Wrapf(err, "unable to get camera %v for count classifier", cn)
 		}
@@ -269,7 +268,7 @@ func (cs *counter) Reconfigure(ctx context.Context, deps resource.Dependencies, 
 	cs.frequency = transitionTime / float64(cs.transitionCount)
 	cs.logger.Infof("number of samples/time between state change for queue estimator, n_samples: %v, time (s): %v. number of cameras: %v", cs.transitionCount, transitionTime, len(cs.cams))
 	cs.detName = countConf.DetectorName
-	cs.detector, err = vision.FromDependencies(deps, countConf.DetectorName)
+	cs.detector, err = vision.FromProvider(deps, countConf.DetectorName)
 	if err != nil {
 		return errors.Wrapf(err, "unable to get vision service %v for count classifier", countConf.DetectorName)
 	}
@@ -409,7 +408,7 @@ func (cs *counter) run(ctx context.Context) error {
 			// process for each stream in the list of cameras
 			totalCounts := 0
 			for camName, bbs := range cs.validRegions {
-				img, err := camera.DecodeImageFromCamera(ctx, utils.MimeTypeJPEG, nil, cs.cams[camName])
+				img, err := camera.DecodeImageFromCamera(ctx, cs.cams[camName], nil, nil)
 				if err != nil {
 					return errors.Errorf("camera %v error in background thread: %q", camName, err)
 				}
