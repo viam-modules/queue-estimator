@@ -1,73 +1,27 @@
-# queue-estimator
-models that summarize information from underlying vision models for waiting
+# `queue-estimator` module
 
-https://app.viam.com/module/viam/queue-estimator
+This module implements the [Viam sensor API](https://docs.viam.com/dev/reference/apis/components/sensor/) to monitor queue wait times and occupancy levels using vision detection. Instead of simple person counting, it analyzes occupancy patterns over time to provide stable status updates.
 
-Using an underlying set of cameras and vision service, you can use information from the vision service to measure crowding around areas of interest.
+## Model: `viam:queue-estimator:wait-sensor`
 
-You specify the areas of interset by filling out the `valid_regions` attribute in the config. If the cropping box list for a camera is empty, the sensor will use the entire scene from that camera.
+The wait-sensor monitors areas of interest using vision detection and provides status updates based on rolling averages of person counts over a configurable time period.
 
-Rather than just counting the sum of people in the areas of interest (which could jump wildly up and down as people pass) to determine whether there a wait time, the algo instead counts to see if enough people are in those areas of interest over a period of time (as determined by the sampling_period_s) and then updates the state of the queue as appropriate. The levels of crowdedness are determined by by the "count_thresholds", as well as how many samples (n_samples) have been taken within the counting period.
+### Configuration
 
-The level of crowdedness is updated continously usually a rolling average based on the past n_samples from the regions of the interest.
-
-## Attributes
+The following attributes are available for this model:
 
 | Name | Type | Inclusion | Description |
 | ---- | ---- | --------- | ----------- |
-| `sampling_period_s` | float64 | Optional | We "look back" over this amount of time to average the crowdedness. The default is 30 seconds. |
-| `n_samples` | int | Required | How many images to take, evenly spaced over `sampling_period_s` seconds. |
-| `valid_regions` | map | Required | Maps camera names (strings) to lists of objects describing bounding boxes within that camera image to search. Use an empty object to examine the entire image.  Otherwise, each object should contain the fields `x_min`, `x_max`, `y_min`, and `y_max`. All four fields should be floats between 0 and 1 and represent a fraction of the image's entire width/height. |
-| `count_thresholds` | map | Required | Maps labels the sensor should return (a string) to the maximum number of people detected when triggering this label (an int). Anything at or below this value (but higher than all lower values) will return this label. |
-| `detector_name` | string | Required | The underlying vision service detector to use |
-| `chosen_labels` | map | Required | The labels and minimum confidence scores of the underlying vision service that should be included in the total count. |
-| `extra_fields` | object | Optional | Any extra fields that should be copied to the sensor output |
+| `n_samples` | int | **Required** | Number of detection samples to collect evenly spaced over the sampling period. Higher values = smoother averaging. |
+| `valid_regions` | object | **Required** | Maps camera names to lists of bounding box regions `{"x_min": 0-1, "y_min": 0-1, "x_max": 0-1, "y_max": 0-1}`. Use `[{}]` for entire camera view. |
+| `count_thresholds` | object | **Required** | Maps custom status labels to minimum person count thresholds. Example: `{"No wait": 0, "Short wait": 2, "Long wait": 5}` |
+| `detector_name` | string | **Required** | Name of your vision service detector. |
+| `chosen_labels` | object | **Required** | Detection labels and confidence thresholds to count. Example: `{"person": 0.6}` |
+| `sampling_period_s` | float | Optional | Time window in seconds for rolling average. Default: 30 |
+| `extra_fields` | object | Optional | Additional metadata to include in sensor output. |
 
-## Example Config
+### Example Configuration
 
-### wait-sensor
-```json
-"name": "queue-sensor",
-"namespace": "rdk",
-"type": "sensor",
-"model": "viam:queue-estimator:wait-sensor",
-"attributes": {
-  "sampling_period_s": 10,
-  "n_samples": 5, # will measure the crowd every 2 seconds
-  "valid_regions": {
-     "camera_3": [{"x_min": 0.3,
-                   "y_min": 0.33,
-                   "x_max": 0.6,
-                   "y_max": 0.65}],
-     "camera_12": [{"x_min": 0.2,
-                    "y_min": 0.1,
-                    "x_max": 0.3,
-                    "y_max": 0.3},
-                   {"x_min": 0.75,
-                    "y_min": 0.75,
-                    "x_max": 1.0,
-                    "y_max": 1.0}],
-     "camera_44": [{}], # this means use the whole camera scene
-  },
-  "count_thresholds": {
-    "0_min": 3,
-    "2_min": 7,
-    "7_min": 14,
-    "10_min": 20,
-    ">10_min": 30
-  },
-  "detector_name": "vision-1",
-  "chosen_labels": {
-    "person": 0.3
-  },
-  "extra_fields": {
-    "location_open": true,
-    "location_name": "store_2"
-  }
-}
-```
-
-### minimum attributes example
 ```json
 {
   "n_samples": 5,
@@ -87,3 +41,52 @@ The level of crowdedness is updated continously usually a rolling average based 
   }
 }
 ```
+
+### Multi-Camera Example
+
+```json
+{
+  "sampling_period_s": 10,
+  "n_samples": 5,
+  "valid_regions": {
+    "entrance_camera": [
+      {
+        "x_min": 0.3,
+        "y_min": 0.3,
+        "x_max": 0.7,
+        "y_max": 0.7
+      }
+    ],
+    "exit_camera": [{}]
+  },
+  "count_thresholds": {
+    "green": 2,
+    "yellow": 5,
+    "red": 10
+  },
+  "detector_name": "vision-1",
+  "chosen_labels": {
+    "person": 0.7
+  },
+  "extra_fields": {
+    "location_name": "Main Entrance"
+  }
+}
+```
+
+### How count_thresholds Work
+
+Define custom status labels with minimum person counts:
+- Status returned when count is >= threshold but < next threshold
+- Use any naming: `"No wait"`, `"green"`, `"0_min"`, etc.
+- Example: With thresholds `{"green": 0, "yellow": 3, "red": 8}`:
+  - 0-2 people → returns "green"
+  - 3-7 people → returns "yellow"  
+  - 8+ people → returns "red"
+
+### Configuration Tips
+
+- **Valid regions:** Use `[{}]` for full camera view, or specify bounding boxes for specific areas
+- **Confidence:** Start with 0.6-0.7; lower (0.4-0.5) for poor lighting, higher (0.7-0.8) to reduce false positives
+- **Samples:** More samples (10-15) = smoother but slower response; fewer (3-5) = faster updates
+- **Thresholds:** Leave gaps between values to prevent status flipping
