@@ -4,7 +4,7 @@ go 1.25.1
 
 require (
 	github.com/pkg/errors v0.9.1
-	go.viam.com/rdk v0.124.0-rc0.0.20260428155858-62da9535aca4
+	go.viam.com/rdk v0.125.0
 	go.viam.com/test v1.2.4
 	go.viam.com/utils v0.4.19
 )
@@ -183,7 +183,7 @@ require (
 	go.uber.org/goleak v1.3.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect
-	go.viam.com/api v0.1.539 // indirect
+	go.viam.com/api v0.1.543-0.20260430194800-592b3aae8365 // indirect
 	go4.org/unsafe/assume-no-moving-gc v0.0.0-20230525183740-e7c30c78aeb2 // indirect
 	golang.org/x/crypto v0.47.0 // indirect
 	golang.org/x/exp v0.0.0-20251113190631-e25ba8c21ef6 // indirect
@@ -197,13 +197,13 @@ require (
 	golang.org/x/time v0.10.0 // indirect
 	golang.org/x/tools v0.40.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
-	gonum.org/v1/gonum v0.16.0 // indirect
+	gonum.org/v1/gonum v0.17.0 // indirect
 	gonum.org/v1/plot v0.15.2 // indirect
 	google.golang.org/api v0.196.0 // indirect
 	google.golang.org/genproto v0.0.0-20240903143218-8af14fe29dc1 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260128011058-8636f8732409 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260128011058-8636f8732409 // indirect
-	google.golang.org/grpc v1.79.3 // indirect
+	google.golang.org/grpc v1.80.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
