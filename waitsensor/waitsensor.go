@@ -14,6 +14,7 @@ import (
 
 	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/components/sensor"
+	"go.viam.com/rdk/data"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/resource"
 	"go.viam.com/rdk/services/vision"
@@ -396,6 +397,17 @@ func (rb *RingBuffer) String() string {
 	return fmt.Sprintf("%.1f", rb.data)
 }
 
+func getNamedImageFromCamera(ctx context.Context, cam camera.Camera) (*camera.NamedImage, error) {
+	images, _, err := cam.Images(ctx, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(images) == 0 {
+		return nil, errors.New("camera returned no images")
+	}
+	return &images[0], nil
+}
+
 func (cs *counter) run(ctx context.Context) error {
 	freq := cs.frequency
 	buffer := NewRingBuffer(cs.transitionCount)
@@ -408,26 +420,36 @@ func (cs *counter) run(ctx context.Context) error {
 			// process for each stream in the list of cameras
 			totalCounts := 0
 			for camName, bbs := range cs.validRegions {
-				img, err := camera.DecodeImageFromCamera(ctx, cs.cams[camName], nil, nil)
+				namedImg, err := getNamedImageFromCamera(ctx, cs.cams[camName])
 				if err != nil {
 					return errors.Errorf("camera %v error in background thread: %q", camName, err)
 				}
 				if len(bbs) == 0 { // if no bounding box, use the image without cropping
-					dets, err := cs.detector.Detections(ctx, img, nil)
+					dets, err := cs.detector.Detections(ctx, namedImg, nil)
 					if err != nil {
 						return errors.Errorf("vision service error in background thread: %q", err)
 					}
 					c := cs.countDets(dets)
 					totalCounts += c
 				}
-				for _, bb := range bbs {
-					img = bb.Crop(img)
-					dets, err := cs.detector.Detections(ctx, img, nil)
+				if len(bbs) > 0 {
+					img, err := namedImg.Image(ctx)
 					if err != nil {
-						return errors.Errorf("vision service error in background thread: %q", err)
+						return errors.Errorf("error decoding image from camera %v: %q", camName, err)
 					}
-					c := cs.countDets(dets)
-					totalCounts += c
+					for _, bb := range bbs {
+						img = bb.Crop(img)
+						croppedNamed, err := camera.NamedImageFromImage(img, namedImg.SourceName, namedImg.MimeType(), data.Annotations{})
+						if err != nil {
+							return errors.Errorf("error wrapping cropped image: %q", err)
+						}
+						dets, err := cs.detector.Detections(ctx, &croppedNamed, nil)
+						if err != nil {
+							return errors.Errorf("vision service error in background thread: %q", err)
+						}
+						c := cs.countDets(dets)
+						totalCounts += c
+					}
 				}
 			}
 			buffer.Add(float64(totalCounts))
